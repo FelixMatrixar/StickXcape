@@ -1,0 +1,25 @@
+{
+  "name": "@sticxcape/netcode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SticXcape client netcode: relay connection, input-delay lockstep, state-hash checks, AI calls, and mocks for offline work",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@sticxcape/shared": "*"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "sticxcape",
+  "private": true,
+  "description": "SticXcape: the motion-capture stick-figure fighting game",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/netcode",
+    "services/server",
+    "e2e"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -b && npm run build:lab -w @sticxcape/server",
+    "typecheck": "tsc -b && tsc -p services/server/lab",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm run dev -w @sticxcape/server",
+    "start": "npm run start -w @sticxcape/server",
+    "e2e:matches": "node e2e/dist/matches.js",
+    "e2e:load": "node e2e/dist/load.js",
+    "clean": "tsc -b --clean"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@sticxcape/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SticXcape MVP services in one Node process: web hosting, rooms, relay, AI gateway and metrics",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b && npm run build:lab",
+    "build:lab": "node scripts/build-lab.mjs",
+    "dev": "node --watch --conditions=source --env-file-if-exists=.env src/index.ts",
+    "start": "node --env-file-if-exists=.env dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/send": "^4.1.2",
+    "@fastify/websocket": "^11.3.4",
+    "@sticxcape/shared": "*",
+    "fastify": "^5.12.7",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@sticxcape/netcode": "*",
+    "@types/ws": "^8.18.2"
+  }
+}

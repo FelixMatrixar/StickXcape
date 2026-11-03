@@ -1,0 +1,22 @@
+{
+  "name": "@sticxcape/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The SticXcape contract: move and arena files, room messages, HTTP API, button bits, input-delay rule and fixed-point maths",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  }
+}
