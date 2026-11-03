@@ -3,7 +3,6 @@
   "references": [
     { "path": "packages/shared" },
     { "path": "packages/netcode" },
-    { "path": "services/server" },
-    { "path": "e2e" }
+    { "path": "services/server" }
   ]
 }

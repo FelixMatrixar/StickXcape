@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, RouteShorthandOptions } from 'fastify';
+import type { WebSocket } from 'ws';
 import type { Relay } from './relay.ts';
 
 export interface RelayRoutesOptions {
@@ -7,9 +8,17 @@ export interface RelayRoutesOptions {
   allowedOrigins: string[];
 }
 
+type WebSocketRoute = (
+  path: string,
+  options: RouteShorthandOptions & { websocket: true },
+  handler: (socket: WebSocket, request: FastifyRequest) => void,
+) => unknown;
+
 /** The relay's WebSocket endpoint: wss://host/ws. */
 export function registerRelayRoutes(app: FastifyInstance, { relay, allowedOrigins }: RelayRoutesOptions): void {
-  app.get(
+  // @fastify/websocket's route typings don't merge under TypeScript 7, so the route is declared through this narrow type.
+  const websocketRoute = app.get.bind(app) as unknown as WebSocketRoute;
+  websocketRoute(
     '/ws',
     {
       websocket: true,

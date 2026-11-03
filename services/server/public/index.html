@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SticXcape</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 32rem; margin: 0 auto; padding: 24px 16px 48px; }
+    .muted { opacity: 0.7; }
+    input, button { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid #8884; }
+    input { width: 100%; box-sizing: border-box; margin: 6px 0 16px; }
+    button { cursor: pointer; }
+    a { word-break: break-all; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SticXcape</h1>
+    <p class="muted">Services test page. The game client isn't deployed here yet; point <code>WEB_ROOT</code> at its build to serve it.</p>
+    <label>Nickname <input id="nickname" maxlength="16" autocomplete="nickname"></label>
+    <section id="home">
+      <button id="create">Create a room</button>
+    </section>
+    <section id="room" hidden>
+      <h2>Room</h2>
+      <p>Open this link on another phone: <a id="link"></a></p>
+      <p><button id="share">Share link</button></p>
+      <ul id="players"></ul>
+      <p id="status" class="muted"></p>
+    </section>
+  </main>
+  <script>
+    // Week 1 check: two phones join one room from a link and see each other.
+    const $ = (id) => document.getElementById(id);
+    const nickname = $('nickname');
+    let me = null;
+
+    function saved() {
+      try { return localStorage.getItem('sticxcape.nickname'); } catch { return null; }
+    }
+    nickname.value = saved() || 'Player ' + Math.floor(10 + Math.random() * 90);
+    nickname.onchange = () => {
+      try { localStorage.setItem('sticxcape.nickname', nickname.value.trim()); } catch {}
+    };
+
+    $('create').onclick = async () => {
+      const res = await fetch('/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: nickname.value }) });
+      const data = await res.json();
+      if (!res.ok) return alert(data.message);
+      history.replaceState(null, '', '/r/' + data.code);
+      join(data.code, data.link);
+    };
+
+    const invite = location.pathname.match(/^\/r\/([0-9a-z]+)\/?$/i);
+    if (invite) join(invite[1].toLowerCase(), location.href);
+
+    function join(room, link) {
+      $('home').hidden = true;
+      $('room').hidden = false;
+      $('link').textContent = link;
+      $('link').href = link;
+      $('share').onclick = () => (navigator.share ? navigator.share({ title: 'SticXcape room', url: link }).catch(() => {}) : prompt('Copy this link', link));
+      $('status').textContent = 'Connecting…';
+      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'join', room, nickname: nickname.value, clientVersion: 1 }));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === 'ping') ws.send(JSON.stringify({ type: 'pong', time: message.time }));
+        if (message.type === 'joined') me = message.player;
+        if (message.type === 'joined' || message.type === 'room') render(message.room);
+        if (message.type === 'error') $('status').textContent = message.message;
+      };
+      ws.onclose = () => { $('status').textContent += ' Disconnected; reload to rejoin.'; };
+    }
+
+    function render(room) {
+      const list = $('players');
+      list.replaceChildren();
+      for (const player of room.players) {
+        const item = document.createElement('li');
+        item.textContent = player.nickname + (player.host ? ' (host)' : '') + (player.player === me ? ' (you)' : '');
+        list.append(item);
+      }
+      $('status').textContent = room.players.length < 2 ? 'Waiting for someone to open the link…' : room.players.length + ' players in the room.';
+    }
+  </script>
+</body>
+</html>

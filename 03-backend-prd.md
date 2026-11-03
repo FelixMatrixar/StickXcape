@@ -23,6 +23,39 @@ The services are everything that runs off the phone. In the MVP they are deliber
 - MVP: MP-1, MP-2 and MP-3 end to end, the AI side of MS-7 and MP-5.
 - Launch: MP-6 to MP-9, AR-4, AR-5, AR-7, and nickname and taunt moderation.
 
+## Progress
+
+Updated 2026-11-03. The code is on the `backend-mvp` branch. Nothing has been tried on phones yet, and there are no automated tests yet.
+
+| Deliverable | Status | Code |
+| --- | --- | --- |
+| Shared types package: move and arena files, room messages, HTTP API, button bits, input-delay rule, fixed-point maths | Written | `packages/shared` |
+| Web hosting | Written: serves the web app, invite links and a test page. HTTPS comes from the host or a local tunnel | `services/server/src/web` |
+| Rooms | Written and tried locally: create, look up, 8-player cap, empty rooms expire after an hour | `services/server/src/rooms` |
+| Relay | Written: lobby, loadout and input passing, ping and input delay, desync and result checks, malformed-message drops, rate cap, input-ahead room close, winner stays on. Only joining has been tried so far | `services/server/src/relay` |
+| AI gateway | Written: Muse Spark names and tips with versioned prompts, structured output, a 4.5 s budget, per-player daily limits, a cache, and canned answers when no key is set. Canned tips tried locally; live Meta calls need a key | `services/server/src/ai` |
+| Metrics and alert | Written: Prometheus `/metrics`, an `/admin` dashboard, and an alert when AI errors pass 5% (optional Slack or Discord webhook) | `services/server/src/metrics` |
+| Netcode client | Written: relay connection, input-delay lockstep, state-hash checks, fixed-step driver | `packages/netcode` |
+| Client mocks | Written: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
+| Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
+| Relay lab (a toy match between two phones) | Not started | |
+| Automated tests, bot matches, bad-network and load scripts | Not started | |
+| Staging deploy (Docker, Fly.io) and CI | Not started | |
+| Launch services | Not started; they wait for playtests | |
+
+**Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. Weeks 2 and 3 need the relay lab or the game client.
+
+**Contract details settled in code.** The [Integration PRD](04-integration-prd.md) left these open, so the frontend owner should review them:
+
+- The relay answers `join` with `joined` (player, host, room), sends lobby changes as `room`, and sends failures as `error` (code, message).
+- `start` also carries `fighters` (left, then right) and `arenaId`. The relay's `end` adds a `reason`: finished, desync, disconnect or room_closed.
+- The 4 stick bits are up, down, left and right on screen; then L, H, S, D and Block.
+- `stateHash` is an unsigned 32-bit number, sent after frames 0, 60, 120 and so on.
+- The ping in the input-delay rule is the round trip between the two phones through the relay.
+- Move frames are 19 little-endian int16 values each: root x and y in millimetres, then 17 joint angles in 1/65536 of a turn. The move hash covers a fixed JSON array of the hashed fields.
+- `POST /ai/move-name` takes the 3 images as `keyframes` (PNG or WebP data URLs). Phones send a random id in `X-Player-Id` for per-player limits, and both AI calls answer 429 once the daily limit is hit.
+- Room codes are 16 characters, invite links are `/r/{code}`, and the first player to join hosts.
+
 ## Services
 
 Five small services make the MVP; five more arrive at launch. All are TypeScript on Node.js, so they share types with the client, and one small server in one region is enough for the MVP beta.
