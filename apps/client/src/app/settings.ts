@@ -2,6 +2,9 @@
 import type { BotLevel } from '../engine/bot.ts';
 import type { LoadoutSelection } from '../moves/loadout.ts';
 
+/** Two thumbs, or one thumb on the right or left (accessibility). */
+export type ControlLayout = 'two' | 'oneRight' | 'oneLeft';
+
 export interface Settings {
   nickname: string | null;
   ink: string;
@@ -14,6 +17,11 @@ export interface Settings {
   vibration: boolean;
   damageNumbers: boolean;
   buttonScale: number;
+  controlLayout: ControlLayout;
+  /** Saved button positions per layout, as fractions of the screen (centres). */
+  controlPositions: Partial<Record<ControlLayout, Record<string, { x: number; y: number }>>>;
+  /** The recorded idle stance to show between moves (LS-12), or null for the standard one. */
+  idleStance: string | null;
   botLevel: BotLevel;
   arena: string;
   loadout: LoadoutSelection;
@@ -37,6 +45,9 @@ const DEFAULTS: Settings = {
   vibration: true,
   damageNumbers: false,
   buttonScale: 1,
+  controlLayout: 'two',
+  controlPositions: {},
+  idleStance: null,
   botLevel: 'normal',
   arena: 'rooftop',
   loadout: {},

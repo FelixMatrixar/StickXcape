@@ -12,6 +12,7 @@ import { settings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import { fightSound, stinger, ui } from '../audio/sfx.ts';
 import { PracticeBot, type BotLevel } from '../engine/bot.ts';
+import type { CompiledMove } from '../engine/moves.ts';
 import { FightSim, MAX_ROUNDS, PHASE, type SimEvent } from '../engine/sim.ts';
 import { simArena } from '../render/arena-files.ts';
 import type { ArenaArt } from '../render/arenas.ts';
@@ -34,6 +35,8 @@ export interface FightConfig {
   localSide: 0 | 1;
   botLevel?: BotLevel;
   session?: LockstepSession;
+  /** Recorded idle stances to draw, per side (looks only). */
+  idles?: [CompiledMove | null, CompiledMove | null];
   onFinish(result: FightResult): void;
   onQuit(): void;
 }
@@ -75,6 +78,7 @@ export function fightScreen(config: FightConfig): Screen {
     shake: settings.shake,
     flashes: settings.flashes,
     damageNumbers: settings.damageNumbers,
+    idles: config.idles,
     onEvent: (event) => onEvent(event),
   });
 

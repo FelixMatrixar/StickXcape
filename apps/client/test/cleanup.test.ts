@@ -2,7 +2,8 @@ import { decodeFrames, FRAME_VALUES, parseMoveFile } from '@sticxcape/shared';
 import { describe, expect, it } from 'vitest';
 import { DEMO_ASPECT, demoTake } from '../src/capture/demo.ts';
 import { FightSim } from '../src/engine/sim.ts';
-import { analyse, cleanCapture, encodeMove, prepareFrames } from '../src/moves/cleanup.ts';
+import { analyse, cleanCapture, encodeMove, floatJoints, prepareFrames, prepareIdle } from '../src/moves/cleanup.ts';
+import { A0, J, JOINT_COUNT } from '../src/engine/skeleton.ts';
 import { defaultMoves } from '../src/moves/defaults.ts';
 import { uuid, withHashSync } from '../src/moves/hash.ts';
 import { LOADOUT_KEYS } from '../src/moves/loadout.ts';
@@ -44,5 +45,47 @@ describe('capture cleanup', () => {
       const info = analyse(frames, 'heavy');
       expect(parseMoveFile(withHashSync(encodeMove(frames, info, { id: uuid(), slot: 'heavy', name: 'Mirror' })))).not.toBeNull();
     }
+  });
+});
+
+describe('physics check, half speed and idle stances', () => {
+  it('plays a half-speed take back at full speed', () => {
+    const take = demoTake(defaultMoves()[0]);
+    const normal = cleanCapture(take, DEMO_ASPECT);
+    const fast = cleanCapture(take, DEMO_ASPECT, { halfSpeed: true });
+    expect(Math.abs(fast.frames.length - Math.ceil(normal.frames.length / 2))).toBeLessThanOrEqual(3);
+  });
+
+  it('fixes a knee that bends the wrong way', () => {
+    const take = demoTake(defaultMoves()[0]);
+    // Shove both knees far behind the line from hip to ankle in a run of frames.
+    for (let f = 10; f < 16; f++) {
+      const p = take[f].points;
+      for (const [hip, knee, ankle] of [[23, 25, 27], [24, 26, 28]]) {
+        const backX = (p[hip * 4] + p[ankle * 4]) / 2 - (p[ankle * 4] - p[hip * 4]) * 0 - 0.08 * Math.sign(p[0] - p[7 * 4] || 1);
+        p[knee * 4] = backX;
+      }
+    }
+    const clean = cleanCapture(take, DEMO_ASPECT);
+    expect(clean.corrected).toBeGreaterThan(0);
+    for (const pose of clean.frames) {
+      for (const joint of [J.lAnkle, J.rAnkle]) {
+        const a = Math.atan2(Math.sin(pose[A0 + joint]), Math.cos(pose[A0 + joint])) * (180 / Math.PI);
+        expect(a).toBeGreaterThanOrEqual(-25.5);
+        expect(a).toBeLessThanOrEqual(165.5);
+      }
+    }
+  });
+
+  it('closes an idle stance into a loop that stays in place', () => {
+    const clean = cleanCapture(demoTake(defaultMoves()[7]), DEMO_ASPECT);
+    const frames = prepareIdle(clean, clean.trim);
+    expect(frames.every((pose) => pose[0] === 0)).toBe(true);
+    const a = new Float64Array(JOINT_COUNT * 2);
+    const b = new Float64Array(JOINT_COUNT * 2);
+    floatJoints(frames[0], a);
+    floatJoints(frames[frames.length - 1], b);
+    const gap = Math.hypot(a[2 * J.rWrist] - b[2 * J.rWrist], a[2 * J.rWrist + 1] - b[2 * J.rWrist + 1]);
+    expect(gap).toBeLessThan(0.12);
   });
 });

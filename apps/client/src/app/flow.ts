@@ -17,7 +17,7 @@ import { studioScreen } from '../screens/studio.ts';
 import { titleScreen } from '../screens/title.ts';
 import { toast } from '../ui/dom.ts';
 import { activeRoom, OnlineRoom, relayErrorText, services, setActiveRoom } from './online.ts';
-import { BOT_NAMES, myInk, myLoadout, myName } from './player.ts';
+import { BOT_NAMES, myIdle, myInk, myLoadout, myName } from './player.ts';
 import { show } from './router.ts';
 import { settings, updateSettings } from './settings.ts';
 
@@ -89,6 +89,7 @@ export const flow = {
         inks: [mine, contrastInk(mine)],
         localSide: 0,
         botLevel: level,
+        idles: [myIdle(), null],
         onFinish: (result) => flow.results(result, { rematch: () => flow.practice() }),
         onQuit: () => flow.home(),
       }),
@@ -179,6 +180,7 @@ export const flow = {
         inks: local === 0 ? [mine, other] : [other, mine],
         localSide: local,
         session,
+        idles: local === 0 ? [myIdle(), null] : [null, myIdle()],
         onFinish: (result) =>
           flow.results(result, {
             rematch: () => void flow.room(room.code, ended),

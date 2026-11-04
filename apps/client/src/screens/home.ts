@@ -111,7 +111,7 @@ export function homeScreen(actions: HomeActions): Screen {
     h('div', { class: 'join-row' }, joinInput, joinGo),
   );
 
-  const recorded = library.moves.length;
+  const recorded = library.files().length;
   const studio = card('studio', ICON.camera, recorded > 0 ? `${recorded} recorded` : 'Motion capture', 'Move Studio', 'Record a move with your camera. Meta AI names it.', () => actions.studio());
   const loadout = card('loadout', ICON.grid, 'Your nine moves', 'Loadout', 'Choose which moves go on L, H, S and D.', () => actions.loadout());
 
