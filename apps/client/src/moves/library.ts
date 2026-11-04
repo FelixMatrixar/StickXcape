@@ -1,10 +1,12 @@
 /**
  * The move library on the phone (IndexedDB). Recorded moves stay in this browser; Safari can
  * clear a site's storage after about a week without a visit, which is why the home screen asks
- * iPhone players to add the app to their home screen. When IndexedDB is unavailable (some
- * private modes), moves live in memory for the visit.
+ * iPhone players to add the app to their home screen, and why moves can be backed up to a file
+ * or synced to the cloud library. When IndexedDB is unavailable (some private modes), moves live
+ * in memory for the visit.
  */
 import { parseMoveFile, type MoveFile } from '@sticxcape/shared';
+import * as db from '../app/db.ts';
 
 export interface StoredMove {
   move: MoveFile;
@@ -16,14 +18,10 @@ export interface StoredMove {
   kind?: 'move' | 'idle';
 }
 
-const DB = 'sticxcape';
-const STORE = 'moves';
-
 type Listener = () => void;
 
 class MoveLibrary {
   private items: StoredMove[] = [];
-  private db: IDBDatabase | null = null;
   private readonly listeners = new Set<Listener>();
   readonly ready: Promise<void>;
   persistent = false;
@@ -32,34 +30,11 @@ class MoveLibrary {
     this.ready = this.open().catch(() => undefined);
   }
 
-  private open(): Promise<void> {
-    return new Promise((resolve) => {
-      if (typeof indexedDB === 'undefined') return resolve();
-      let request: IDBOpenDBRequest;
-      try {
-        request = indexedDB.open(DB, 1);
-      } catch {
-        return resolve();
-      }
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'move.id' });
-      };
-      request.onerror = () => resolve();
-      request.onsuccess = () => {
-        this.db = request.result;
-        this.persistent = true;
-        const tx = this.db.transaction(STORE, 'readonly');
-        const all = tx.objectStore(STORE).getAll();
-        all.onsuccess = () => {
-          const rows = (all.result as StoredMove[]).filter((row) => parseMoveFile(row.move) !== null);
-          this.items = rows.sort((a, b) => b.createdAt - a.createdAt);
-          resolve();
-          this.emit();
-        };
-        all.onerror = () => resolve();
-      };
-    });
+  private async open(): Promise<void> {
+    this.persistent = (await db.openDb()) !== null;
+    const rows = (await db.getAll<StoredMove>('moves')).filter((row) => parseMoveFile(row.move) !== null);
+    this.items = rows.sort((a, b) => b.createdAt - a.createdAt);
+    this.emit();
   }
 
   get moves(): readonly StoredMove[] {
@@ -76,27 +51,22 @@ class MoveLibrary {
   }
 
   async save(item: StoredMove): Promise<void> {
-    this.items = [item, ...this.items.filter((other) => other.move.id !== item.move.id)];
+    this.items = [item, ...this.items.filter((other) => other.move.id !== item.move.id)].sort((a, b) => b.createdAt - a.createdAt);
     this.emit();
-    if (!this.db) return;
-    await new Promise<void>((resolve) => {
-      const tx = this.db!.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(item);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
+    await db.put('moves', item);
   }
 
   async remove(id: string): Promise<void> {
     this.items = this.items.filter((item) => item.move.id !== id);
     this.emit();
-    if (!this.db) return;
-    await new Promise<void>((resolve) => {
-      const tx = this.db!.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
+    await db.remove('moves', id);
+  }
+
+  /** Deletes every recorded move and idle stance on this phone. */
+  async clear(): Promise<void> {
+    this.items = [];
+    this.emit();
+    await db.clear('moves');
   }
 
   onChange(listener: Listener): () => void {

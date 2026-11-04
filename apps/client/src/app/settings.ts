@@ -30,6 +30,10 @@ export interface Settings {
   /** Dismissed the add-to-home-screen hint. */
   installHint: boolean;
   coachMarks: boolean;
+  /** Confirmed being 13 or older (SticXcape is 13+ at launch). */
+  ageConfirmed: boolean;
+  /** Nicknames this player blocked: never matched or roomed with them again. */
+  blocked: string[];
 }
 
 const KEY = 'sticxcape.settings.v1';
@@ -54,6 +58,8 @@ const DEFAULTS: Settings = {
   onboarded: false,
   installHint: false,
   coachMarks: true,
+  ageConfirmed: false,
+  blocked: [],
 };
 
 function load(): Settings {

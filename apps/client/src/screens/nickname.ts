@@ -60,6 +60,19 @@ export function nicknameScreen(onDone: () => void, options: { step?: string; edi
     swatches.append(sw);
   }
 
+  // SticXcape is 13+ at launch: asked once, before anything is recorded.
+  let olderThan13 = settings.ageConfirmed;
+  const ageSwitch = h('button', { class: `switch${olderThan13 ? ' is-on' : ''}`, attrs: { role: 'switch', 'aria-checked': String(olderThan13), 'aria-label': 'I’m 13 or older' } });
+  ageSwitch.addEventListener('click', () => {
+    olderThan13 = !olderThan13;
+    ageSwitch.classList.toggle('is-on', olderThan13);
+    ageSwitch.setAttribute('aria-checked', String(olderThan13));
+    ui.toggle(olderThan13);
+  });
+  const ageRow = settings.ageConfirmed
+    ? null
+    : h('div', { class: 'age-row rise' }, ageSwitch, h('div', null, h('b', { text: 'I’m 13 or older' }), h('small', { class: 'muted', text: 'SticXcape is for players 13 and up.' })));
+
   const go = press(h('button', { class: 'btn btn-primary', style: 'align-self:flex-start' }, options.editing ? 'Save' : 'Continue', svg(ICON.arrow)), () => submit(), { sound: 'none' });
   const submit = () => {
     const name = cleanText(input.value || randomNickname(), NICKNAME_MAX_LENGTH);
@@ -68,8 +81,15 @@ export function nicknameScreen(onDone: () => void, options: { step?: string; edi
       input.focus();
       return;
     }
+    if (!olderThan13) {
+      toast('SticXcape is for players 13 and older.', 'error');
+      ageSwitch.classList.remove('is-nudge');
+      void ageSwitch.offsetWidth;
+      ageSwitch.classList.add('is-nudge');
+      return;
+    }
     ui.confirm();
-    updateSettings({ nickname: name, ink: ink.id });
+    updateSettings({ nickname: name, ink: ink.id, ageConfirmed: true });
     onDone();
   };
   input.addEventListener('keydown', (e) => {
@@ -89,6 +109,7 @@ export function nicknameScreen(onDone: () => void, options: { step?: string; edi
     { style: 'display:flex;flex-direction:column;gap:18px' },
     h('div', { class: 'field rise' }, h('div', { style: 'display:flex;justify-content:space-between' }, h('span', { class: 'field-label', text: 'Nickname' }), count), h('div', { class: 'nick-row' }, input, dice)),
     h('div', { class: 'field rise' }, h('span', { class: 'field-label', text: 'Your ink' }), swatches),
+    ageRow,
     h('div', { class: 'rise' }, go),
   );
   const el = h('section', { class: 'nick' }, h('div', { class: 'split' }, left, right));

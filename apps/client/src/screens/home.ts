@@ -6,6 +6,7 @@ import { settings, updateSettings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import type { BotLevel } from '../engine/bot.ts';
 import { library } from '../moves/library.ts';
+import { photoArenas } from '../arenas/store.ts';
 import { MovePreview } from '../render/preview.ts';
 import { h, press, stagger, svg, tilt, toast } from '../ui/dom.ts';
 import { ICON } from '../ui/icons.ts';
@@ -17,6 +18,7 @@ export interface HomeActions {
   joinRoom(code: string): void;
   studio(): void;
   loadout(): void;
+  arenas(): void;
   editName(): void;
 }
 
@@ -114,8 +116,10 @@ export function homeScreen(actions: HomeActions): Screen {
   const recorded = library.files().length;
   const studio = card('studio', ICON.camera, recorded > 0 ? `${recorded} recorded` : 'Motion capture', 'Move Studio', 'Record a move with your camera. Meta AI names it.', () => actions.studio());
   const loadout = card('loadout', ICON.grid, 'Your nine moves', 'Loadout', 'Choose which moves go on L, H, S and D.', () => actions.loadout());
+  const yours = photoArenas.list.length;
+  const arenas = card('photo-arenas', ICON.image, yours > 0 ? `${yours} made` : 'From a photo', 'Photo arenas', 'Snap a real place and fight in it.', () => actions.arenas());
 
-  const grid = h('div', { class: 'home-grid' }, practice, create, joinCard, studio, loadout);
+  const grid = h('div', { class: 'home-grid' }, practice, create, joinCard, studio, loadout, arenas);
   const el = h('section', { class: 'home' }, top, grid);
 
   // Safari can clear storage after a week without a visit: ask iPhone players to install.
@@ -130,7 +134,7 @@ export function homeScreen(actions: HomeActions): Screen {
     el.append(hint);
   }
 
-  for (const c of [practice, create, studio, loadout]) tilt(c, 5);
+  for (const c of [practice, create, studio, loadout, arenas]) tilt(c, 5);
 
   const preview = new MovePreview(art, { ink, background: null, floor: 'rgba(255,255,255,0.1)', span: 2.9, rest: 0.4, outline: 'rgba(255,250,240,0.85)' });
   const moves = myLoadout();

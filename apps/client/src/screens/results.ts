@@ -13,6 +13,8 @@ import { MovePreview } from '../render/preview.ts';
 import { countUp, h, press, sleep, stagger, svg, typewriter } from '../ui/dom.ts';
 import { ICON } from '../ui/icons.ts';
 import { LOADOUT_KEYS } from '../moves/loadout.ts';
+import { activeRoom } from '../app/online.ts';
+import { trustRow } from '../ui/social-ui.ts';
 
 export interface ResultsActions {
   rematch(): void;
@@ -82,7 +84,9 @@ export function resultsScreen(result: FightResult, actions: ResultsActions): Scr
   const edit = press(h('button', { class: 'btn' }, svg(ICON.edit), 'Edit moves'), () => actions.editMoves());
   const home = press(h('button', { class: 'btn btn-ghost' }, 'Home'), () => actions.home(), { sound: 'back' });
   const actionRow = h('div', { class: 'actions rise', style: '--i:4' }, rematch, edit, home);
-  const side = h('div', { class: 'results-side' }, statsCard, tips, actionRow);
+  // Online: report or block the player you just fought (trust and safety).
+  const trust = config.mode === 'practice' ? null : h('div', { class: 'rise', style: '--i:5' }, trustRow(config.names[config.localSide === 0 ? 1 : 0], activeRoom()?.code ?? null));
+  const side = h('div', { class: 'results-side' }, statsCard, tips, actionRow, trust);
   const el = h('section', { class: 'results' }, hero, side);
 
   const preview = new MovePreview(heroCanvas, { ink: config.inks[winnerIndex], background: '#24201c', floor: 'rgba(255,255,255,0.12)', span: 3.1, rest: 0.1, outline: 'rgba(255,250,240,0.9)' });

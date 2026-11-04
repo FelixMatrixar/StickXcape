@@ -7,8 +7,9 @@ import { audio } from '../audio/engine.ts';
 import { ui } from '../audio/sfx.ts';
 import type { BotLevel } from '../engine/bot.ts';
 import type { ControlLayout } from '../app/settings.ts';
+import { deleteMyData, downloadBackup, restoreBackup } from '../app/privacy.ts';
 import { openControlsEditor } from './controls-editor.ts';
-import { h, press, svg } from './dom.ts';
+import { h, press, svg, toast } from './dom.ts';
 import { ICON } from './icons.ts';
 
 let corner: HTMLElement;
@@ -180,6 +181,63 @@ export function openSettings(): void {
         (level) => updateSettings({ botLevel: level }),
       ),
     ),
+    ...extraSections.map((make) => make()),
+    h('div', { class: 'kicker', style: 'margin-top:16px', text: 'Your data' }),
+    row('Back up my moves', 'Save them to a file, to keep or to move to another phone', press(h('button', { class: 'btn btn-small', text: 'Back up' }), () => {
+      const count = downloadBackup();
+      toast(count ? `Saved ${count} recorded ${count === 1 ? 'move' : 'moves'} to a file.` : 'Nothing recorded yet: the backup only has your settings.', count ? 'good' : 'info');
+    })),
+    row('Restore a backup', 'Adds moves from a backup file; nothing is replaced', restoreButton()),
+    row('Delete my moves and data', 'Everything on this phone: moves, stances, photo arenas and settings', deleteButton()),
   );
   document.body.append(backdrop, sheet);
+}
+
+/** Settings sections other features add (the account, blocked players, device checks). */
+const extraSections: (() => HTMLElement)[] = [];
+
+export function addSettingsSection(make: () => HTMLElement): void {
+  extraSections.push(make);
+}
+
+function restoreButton(): HTMLElement {
+  const file = h('input', { type: 'file', attrs: { accept: 'application/json,.json', 'aria-label': 'Backup file' }, style: 'display:none' });
+  file.addEventListener('change', async () => {
+    const chosen = file.files?.[0];
+    file.value = '';
+    if (!chosen) return;
+    try {
+      const added = await restoreBackup(await chosen.text());
+      toast(added ? `Restored ${added} ${added === 1 ? 'move' : 'moves'}.` : 'Those moves are already on this phone.', 'good');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'That backup couldn’t be read.', 'error');
+    }
+  });
+  const button = press(h('button', { class: 'btn btn-small', text: 'Restore' }), () => file.click());
+  return h('div', null, button, file);
+}
+
+/** Two taps, so nobody wipes their moves by accident. */
+function deleteButton(): HTMLElement {
+  const button = h('button', { class: 'btn btn-small btn-danger', text: 'Delete' });
+  let armed = 0;
+  press(button, async () => {
+    if (!armed) {
+      button.textContent = 'Tap again to delete';
+      button.classList.add('is-armed');
+      armed = window.setTimeout(() => {
+        armed = 0;
+        button.textContent = 'Delete';
+        button.classList.remove('is-armed');
+      }, 3500);
+      return;
+    }
+    clearTimeout(armed);
+    button.disabled = true;
+    button.textContent = 'Deleting…';
+    await deleteMyData();
+    toast('Deleted. Starting fresh.', 'good');
+    setTimeout(() => location.replace('/'), 900);
+  }, { sound: 'back' });
+  return button;
 }
