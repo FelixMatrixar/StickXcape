@@ -44,8 +44,10 @@ export interface AiConfig {
   timeoutMs: number;
   moveNamesPerDay: number;
   matchTipsPerDay: number;
-  /** Nickname checks before quick match; repeats of a checked name are free (cached). */
-  nicknameChecksPerDay: number;
+  /** Name checks (quick match nicknames, shared arena names); a name already checked is free (cached). */
+  nameChecksPerDay: number;
+  /** Backdrop checks before a photo arena is shared. */
+  arenaChecksPerDay: number;
   /** One IP may use this many players' worth of the daily limits (shared Wi-Fi, rotated ids). */
   perIpMultiplier: number;
   cacheEntries: number;
@@ -172,7 +174,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       timeoutMs: int(env, 'AI_TIMEOUT_MS', 4500, 500, 30_000),
       moveNamesPerDay: int(env, 'AI_MOVE_NAMES_PER_DAY', 30, 0, 100_000),
       matchTipsPerDay: int(env, 'AI_MATCH_TIPS_PER_DAY', 60, 0, 100_000),
-      nicknameChecksPerDay: int(env, 'AI_NICKNAME_CHECKS_PER_DAY', 20, 0, 100_000),
+      nameChecksPerDay: int(env, 'AI_NAME_CHECKS_PER_DAY', 20, 0, 100_000),
+      arenaChecksPerDay: int(env, 'AI_ARENA_CHECKS_PER_DAY', 10, 0, 100_000),
       perIpMultiplier: 10,
       cacheEntries: 5000,
       cacheTtlMs: 24 * 60 * 60 * 1000,

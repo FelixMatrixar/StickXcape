@@ -27,6 +27,8 @@ export interface HubContext {
   verifyMove: (move: MoveFile) => boolean;
   /** Quick match rooms: a match ended; the fighters' accounts are left then right. */
   quickMatchEnded: (accounts: [string | null, string | null], winnerSide: Side | null, reason: EndReason) => void;
+  /** Why a room can't fight in this arena (a photo arena that isn't shared, or strangers), or null. */
+  arenaProblem: (arenaId: string, quick: boolean) => { code: ErrorCode; message: string } | null;
 }
 
 export type Side = 0 | 1;
@@ -141,6 +143,8 @@ export class Hub {
   setArena(player: number, arenaId: string): void {
     if (this.room.host !== player) return this.error(player, 'not_host', 'Only the host picks the arena');
     if (this.match) return this.error(player, 'match_in_progress', 'The arena is locked during a match');
+    const problem = this.ctx.arenaProblem(arenaId, this.room.quick);
+    if (problem) return this.error(player, problem.code, problem.message);
     this.room.arenaId = arenaId;
     // Changing the arena after someone readied would be a bait-and-switch, so both ready again.
     this.ready.clear();
@@ -322,6 +326,15 @@ export class Hub {
     const connA = this.conns.get(a);
     const connB = this.conns.get(b);
     if (!connA || !connB) return;
+    // A photo arena deleted since it was picked: both phones could no longer load the same one.
+    const problem = this.room.arenaId ? this.ctx.arenaProblem(this.room.arenaId, this.room.quick) : null;
+    if (problem) {
+      this.room.arenaId = null;
+      this.ready.clear();
+      for (const player of [a, b]) this.error(player, problem.code, `${problem.message}. The room is back on the default arena.`);
+      this.broadcastRoom();
+      return;
+    }
     const { defaultRttMs } = this.ctx.config;
     const pingMs = (connA.rtt() ?? defaultRttMs) + (connB.rtt() ?? defaultRttMs);
     // Rollback needs both phones to run it; otherwise both wait for each other's inputs.

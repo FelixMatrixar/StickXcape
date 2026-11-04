@@ -6,6 +6,7 @@ import { registerAccountRoutes } from './accounts/routes.ts';
 import { MoveSigner } from './accounts/signing.ts';
 import { AccountStore } from './accounts/store.ts';
 import { AiGateway } from './ai/gateway.ts';
+import { registerArenaRoutes } from './arenas/routes.ts';
 import { registerAiRoutes } from './ai/routes.ts';
 import type { Config } from './config.ts';
 import { alertNotifier, ErrorRateAlert } from './metrics/alerts.ts';
@@ -99,6 +100,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   registerRelayRoutes(app, { relay, allowedOrigins: config.allowedOrigins, accounts });
   registerAiRoutes(app, { gateway: ai });
   const accountRoutes = registerAccountRoutes(app, { config, store: accounts, signer, metrics, now });
+  const arenaRoutes = registerArenaRoutes(app, { config, store: accounts, ai, metrics, now });
   registerMonitoringRoutes(app, { config, metrics, rooms, relay, ai, alert });
   app.get('/version', async () => ({ minClientVersion: config.minClientVersion, serverVersion: config.serverVersion }));
   registerWeb(app, { webRoot: config.webRoot, labRoot: config.labRoot });
@@ -107,6 +109,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
     rooms.sweep();
     roomLimiter.prune(now());
     accountRoutes.prune(now());
+    arenaRoutes.prune(now());
     accounts?.pruneSessions();
     alert.check();
   }, SWEEP_INTERVAL_MS);

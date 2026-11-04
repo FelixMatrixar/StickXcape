@@ -87,7 +87,8 @@ export function statsSnapshot({ config, metrics, rooms, relay, ai, alert }: Moni
       mode: ai.mode,
       moveName: aiCall('move_name'),
       matchTips: aiCall('match_tips'),
-      nicknameCheck: aiCall('nickname_check'),
+      nameCheck: aiCall('name_check'),
+      arenaCheck: aiCall('arena_check'),
       alert: { ...alert.stats(), threshold: config.monitoring.aiErrorRatio },
     },
   };

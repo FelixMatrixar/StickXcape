@@ -28,6 +28,9 @@ export const ERROR_CODES = [
   'nickname_blocked',
   'unsigned_move',
   'quick_match_unavailable',
+  // Photo arenas in rooms (launch).
+  'arena_not_shared',
+  'arena_friends_only',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

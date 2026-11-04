@@ -71,10 +71,33 @@ export interface SignMovesResponse {
 }
 export const SIGN_MAX_MOVES = 16;
 
-/** Reasons a player can be reported for. */
-export const REPORT_REASONS = ['nickname', 'cheating', 'abuse', 'other'] as const;
+/** Reasons a player can be reported for: an offensive name, an offensive move or taunt, cheating, something else. */
+export const REPORT_REASONS = ['name', 'moves', 'cheating', 'other'] as const;
 export type ReportReason = (typeof REPORT_REASONS)[number];
 export const REPORT_NOTE_MAX_LENGTH = 300;
+
+/**
+ * POST /reports: a report from a friend room's results screen, where players have only a
+ * nickname. Sent with the phone's X-Player-Id; phones keep reports that fail and send them later.
+ */
+export interface RoomReport {
+  nickname: string;
+  reason: ReportReason;
+  /** The room code the match was played in, when there was one. */
+  room: string | null;
+  /** When the phone made the report (ISO 8601); it may arrive later. */
+  at: string;
+}
+
+export function parseRoomReport(value: unknown): RoomReport | null {
+  if (!isRecord(value)) return null;
+  const nickname = cleanText(value.nickname, NICKNAME_MAX_LENGTH);
+  const { reason, room, at } = value;
+  if (nickname === null || typeof reason !== 'string' || !(REPORT_REASONS as readonly string[]).includes(reason)) return null;
+  if (room !== null && room !== undefined && (typeof room !== 'string' || !/^[0-9a-z]{1,64}$/i.test(room))) return null;
+  if (typeof at !== 'string' || at.length > 40 || Number.isNaN(Date.parse(at))) return null;
+  return { nickname, reason: reason as ReportReason, room: typeof room === 'string' ? room.toLowerCase() : null, at };
+}
 
 /** POST /account/reports */
 export interface ReportRequest {

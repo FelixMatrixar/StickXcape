@@ -14,6 +14,10 @@ import {
   decodeBase64Url,
   encodeBase64Url,
   parseAccountName,
+  parseArenaPalette,
+  parseRoomReport,
+  photoArenaLayer,
+  isPhotoArenaId,
   parseCloudMove,
   parseLoadoutSelection,
   parsePasskeyAssertion,
@@ -200,6 +204,33 @@ describe('parseClientMessage', () => {
     const move = await sampleMove();
     expect(parse({ type: 'loadout', moves: [move] })).toEqual({ type: 'loadout', moves: [move] });
     expect(parse({ type: 'loadout', moves: [] })).toBeNull();
+  });
+});
+
+describe('shared photo arenas and room reports', () => {
+  it('takes palettes of rgb() or hex colours only', () => {
+    const palette = { sky: 'rgb(1, 2, 3)', skyLow: 'rgb(255,255,255)', floorTop: '#a0B1c2', floorBottom: 'rgb(0, 0, 0)', ledge: 'rgb(9, 9, 9)', ledgeTop: 'rgb(10, 20, 30)' };
+    expect(parseArenaPalette({ ...palette, extra: 'x' })).toEqual(palette);
+    for (const sky of ['red', 'rgb(256, 0, 0)', 'url(https://a.example)', '#abc', 'rgba(1, 2, 3, 0.5)']) {
+      expect(parseArenaPalette({ ...palette, sky }), sky).toBeNull();
+    }
+    expect(parseArenaPalette({ ...palette, ledgeTop: undefined })).toBeNull();
+    expect(photoArenaLayer('abc')).toBe('photo:abc');
+  });
+
+  it('tells photo arenas (UUIDs) from built-in ones (short names)', () => {
+    expect(isPhotoArenaId('7a1c0de0-0000-4000-8000-0000000000aa')).toBe(true);
+    for (const id of ['rooftop', 'dojo', 'rooftop-2', '7A1C0DE0-0000-4000-8000-0000000000AA']) expect(isPhotoArenaId(id), id).toBe(false);
+  });
+
+  it('checks reports from friend rooms', () => {
+    const report = { nickname: ' Bo ', reason: 'name', room: '0123456789ABCDEF', at: '2026-11-05T09:00:00Z' };
+    expect(parseRoomReport(report)).toEqual({ nickname: 'Bo', reason: 'name', room: '0123456789abcdef', at: '2026-11-05T09:00:00Z' });
+    expect(parseRoomReport({ ...report, room: null })).toMatchObject({ room: null });
+    expect(parseRoomReport({ ...report, room: undefined })).toMatchObject({ room: null });
+    for (const bad of [{ ...report, reason: 'nickname' }, { ...report, at: 'soon' }, { ...report, room: 'a/b' }, { ...report, nickname: 'x'.repeat(17) }]) {
+      expect(parseRoomReport(bad)).toBeNull();
+    }
   });
 });
 

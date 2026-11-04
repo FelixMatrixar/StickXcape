@@ -70,7 +70,7 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 | --- | --- | --- | --- |
 | join | Phone | room, nickname, clientVersion | Relay adds the player and replies with their player number and whether they host, or an error |
 | loadout | Phone | moves | Relay passes it to the other player |
-| arena | Host | arenaId | Relay passes it on |
+| arena | Host | arenaId | Relay passes it on. A photo arena (a UUID id) must be shared and is for friend rooms only |
 | ready | Phone | rollback (optional, launch) | When both are ready, the relay sends start |
 | start | Relay | seed, inputDelay, startFrame, fighters, arenaId, rollback | Both phones begin on the same frame |
 | input | Phone | frame, buttons | Relay passes it on immediately |
@@ -117,7 +117,19 @@ All calls use HTTPS and reply in JSON. A version mismatch on join tells the phon
 | GET /account/blocks | None | players (id, name, blockedAt) | 401 |
 | POST /account/blocks | player (account id) | Nothing (204); never matched again, either way round | 404: no such player |
 | DELETE /account/blocks/{id} | None | Nothing (204) | 404: not blocked |
-| POST /account/reports | player, reason (nickname, cheating, abuse or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
+| POST /account/reports | player, reason (name, moves, cheating or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
+
+**Shared photo arenas and room reports (launch, AR-4, AR-5, AR-7).** The phone makes photo arenas itself; these share finished ones with friends and take reports from friend rooms. They send the phone's `X-Player-Id` and need no sign-in.
+
+| Call | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| POST /arenas | Multipart: file (arena JSON whose only layer is `photo:{id}`), image (JPEG, 160 to 2048 px a side, at most 1.5 MB), palette (6 colours) | 201 id, link (`/a/{id}`); 200 when that phone already shared it | 400: malformed, `name_blocked` or `image_blocked`; 409: id taken or 30 shared already; 429: 10 an hour per network; 503: `check_unavailable` |
+| GET /arenas/{id} | None | file, imageUrl, palette | 404: not shared or deleted |
+| GET /arenas/{id}/image | None | The JPEG backdrop | 404 |
+| DELETE /arenas/{id} | None (same X-Player-Id) | Nothing (204) | 404: not that phone's |
+| POST /reports | nickname, reason (name, moves, cheating or other), room (or null), at | 202 | 400; 429: over 20 a day per phone; 503: try again later |
+
+A friend room can fight in a shared photo arena. The host's `arena` message names it; the relay refuses it with `arena_not_shared` unless it is shared, and with `arena_friends_only` in quick match. Every phone loads it from `GET /arenas/{id}` before getting ready. A shared arena never changes, so all of them fight in the same one. If it is deleted before the match starts, the relay puts the room back on the default arena (`arenaId` null) and tells both fighters.
 | GET /account/library | None | moves (move, kind, description, quality, createdAt, updatedAt), loadout | 401 |
 | PUT /account/library/moves/{id} | move, kind (move or idle), description, quality, createdAt | updatedAt | 400: malformed or hash mismatch; 409: library full (200 moves) |
 | DELETE /account/library/moves/{id} | None | Nothing (204) | 404: not in the library |
