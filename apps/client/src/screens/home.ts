@@ -141,7 +141,7 @@ export function homeScreen(actions: HomeActions): Screen {
   };
   cycle();
   const timer = setInterval(cycle, 2000);
-  art.style.cssText = 'position:absolute;inset:auto 0 12% auto;width:72%;height:64%;opacity:.95';
+  art.style.cssText = 'position:absolute;top:6%;right:0;width:66%;height:58%;opacity:.95';
 
   return {
     el,

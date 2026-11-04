@@ -11,6 +11,7 @@ export interface CameraTargets {
 }
 
 const FLOOR_ROW = 0.8;
+const FLOOR_ROW_SHORT = 0.74;
 const EYE_HEIGHT = 1.2;
 
 export class FightCamera {
@@ -59,7 +60,7 @@ export class FightCamera {
 
   /** The screen row of the horizon (eye level). */
   get horizon(): number {
-    return this.height * FLOOR_ROW - EYE_HEIGHT * this.ppm;
+    return this.height * (this.height < 480 ? FLOOR_ROW_SHORT : FLOOR_ROW) - EYE_HEIGHT * this.ppm;
   }
 
   sx(x: number, depth = 0): number {

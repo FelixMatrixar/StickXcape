@@ -2217,7 +2217,24 @@ input[type='range'].slider {
   gap: 6px;
 }
 
+.slot-top,
+.slot-name,
+.slot-tags {
+  flex: none;
+}
+
+.slot-top .kicker {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .slot-input {
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
   font: 800 10px/1 var(--ui);
   padding: 3px 6px;
   border-radius: 6px;
@@ -2817,6 +2834,17 @@ input[type='range'].slider {
 @media (max-height: 430px) {
   .choice {
     min-height: 0;
+  }
+  .home-card {
+    padding: 10px 12px;
+  }
+  .home-card .icon {
+    width: 22px;
+    height: 22px;
+  }
+  .join-row .input,
+  .join-row .btn-small {
+    min-height: 34px;
   }
   .home-card p {
     display: none;

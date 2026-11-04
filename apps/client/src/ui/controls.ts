@@ -75,7 +75,7 @@ export class Controls {
     const pad = h('div', { class: 'pad' });
     for (const def of PAD) pad.append(this.padButton(def));
     this.el = h('div', { class: 'controls' }, this.zone, pad);
-    this.el.style.setProperty('--ui-scale', String(settings.buttonScale));
+    this.el.style.setProperty('--ui-scale', String(uiScale()));
     this.bindStick();
 
     const coarse = matchMedia('(pointer: coarse)').matches;
@@ -178,7 +178,7 @@ export class Controls {
     };
     el.addEventListener('pointerdown', (event) => {
       event.preventDefault();
-      el.setPointerCapture(event.pointerId);
+      capture(el, event.pointerId);
       pointers.add(event.pointerId);
       this.buttonBits |= def.bit;
       el.classList.add('is-held');
@@ -197,7 +197,8 @@ export class Controls {
 
   private placeHome(): void {
     const rect = this.zone.getBoundingClientRect();
-    const scale = settings.buttonScale;
+    const scale = uiScale();
+    this.el.style.setProperty('--ui-scale', String(scale));
     this.home = { x: Math.max(90 * scale, rect.width * 0.24), y: rect.height - 96 * scale };
     if (this.stickPointer === null) {
       this.stick.style.left = `${this.home.x}px`;
@@ -208,7 +209,7 @@ export class Controls {
   private bindStick(): void {
     let originX = 0;
     let originY = 0;
-    const radius = () => 64 * settings.buttonScale;
+    const radius = () => 64 * uiScale();
     const move = (event: PointerEvent) => {
       if (event.pointerId !== this.stickPointer) return;
       const r = radius();
@@ -261,7 +262,7 @@ export class Controls {
     this.zone.addEventListener('pointerdown', (event) => {
       if (this.stickPointer !== null) return;
       event.preventDefault();
-      this.zone.setPointerCapture(event.pointerId);
+      capture(this.zone, event.pointerId);
       this.stickPointer = event.pointerId;
       const rect = this.zone.getBoundingClientRect();
       const r = radius();
@@ -310,6 +311,20 @@ export class Controls {
   destroy(): void {
     for (const fn of this.cleanup) fn();
     this.el.remove();
+  }
+}
+
+/** Control size: the player's setting, scaled down on short screens (a phone held sideways). */
+function uiScale(): number {
+  return settings.buttonScale * Math.max(0.72, Math.min(1.1, window.innerHeight / 470));
+}
+
+/** Pointer capture keeps a held button pressed when the thumb slides off it; some pointers refuse it. */
+function capture(el: Element, pointerId: number): void {
+  try {
+    el.setPointerCapture(pointerId);
+  } catch {
+    // Without capture the press still counts; it ends on pointerup or pointerleave.
   }
 }
 

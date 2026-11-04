@@ -77,6 +77,8 @@ export function fightScreen(config: FightConfig): Screen {
     onEvent: (event) => onEvent(event),
   });
 
+  if (import.meta.env.DEV) (window as unknown as { __fight?: unknown }).__fight = { get sim() { return sim; }, controls, scene };
+
   function newSim(): FightSim {
     return new FightSim({ seed: config.seed, arena: { width: config.arena.file.width, spawns: config.arena.file.spawns }, loadouts: config.loadouts });
   }

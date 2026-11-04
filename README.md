@@ -20,8 +20,47 @@ Diagrams are in [images/](images/). These files were exported on 2026-11-03 from
 | [services/server](services/server/src/app.ts) | The MVP services in one Node process: web hosting, rooms, relay, AI gateway, metrics |
 | [services/server/lab](services/server/lab/main.ts) | The relay lab at `/lab/`: a toy match between two phones through the relay, on the game's netcode |
 | [services/server/scripts](services/server/scripts/bots.ts) | Bot matches for the 50-match, bad-network and load checks, and the lab build |
+| [apps/client](apps/client/src/main.ts) | The game client: Move Studio, the deterministic fight engine, renderer, sound and every screen |
+| [apps/client/scripts](apps/client/scripts/bot-opponent.ts) | A practice bot that joins a room through the relay and fights with the client's engine |
 
-Progress against the backend plan is tracked in the [Backend PRD](03-backend-prd.md#progress).
+Progress is tracked in the [Frontend PRD](02-frontend-prd.md#progress) and the [Backend PRD](03-backend-prd.md#progress).
+
+### Run the game
+
+```bash
+npm install
+npm run dev
+```
+
+```bash
+npm run dev:client
+```
+
+The first starts the services on port 8080; the second serves the game on port 5173 and forwards rooms, the relay and AI calls to the services. Open http://localhost:5173. Practice fights and Move Studio work without the services; rooms, move names and coach tips need them.
+
+On a computer: A and D walk, W jumps, S crouches, J light, K heavy, L special, I defense, Space blocks (tap it just before a hit lands to parry). Gamepads work too. On phones the on-screen stick and buttons appear.
+
+To fight online from one computer, create a room in the browser and let a bot join it:
+
+```bash
+node --conditions=source apps/client/scripts/bot-opponent.ts <invite link> --level hard
+```
+
+Both sides run the same engine and the relay compares their state hashes every second, so a finished match also proves the browser and Node agree.
+
+Phones need HTTPS for the camera. Build everything, then serve the game from the services and open it through a tunnel such as `cloudflared tunnel --url http://localhost:8080`:
+
+```bash
+npm run build
+```
+
+```bash
+WEB_ROOT=../../apps/client/dist TRUST_PROXY=1 npm start
+```
+
+`WEB_ROOT` is relative to `services/server`, where the server runs. The [Docker image](Dockerfile) already serves the game this way.
+
+Without a camera, Move Studio offers a demo take: a default move replayed as noisy tracking through the same cleanup.
 
 ### Run the services
 

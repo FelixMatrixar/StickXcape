@@ -481,7 +481,11 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     const drag = (handle: HTMLElement, which: 0 | 1) => {
       handle.addEventListener('pointerdown', (event) => {
         event.preventDefault();
-        handle.setPointerCapture(event.pointerId);
+        try {
+          handle.setPointerCapture(event.pointerId);
+        } catch {
+          // Dragging still works while the pointer stays on the handle.
+        }
         handle.classList.add('is-dragging');
         haptic('ui');
       });
