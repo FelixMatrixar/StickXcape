@@ -6,17 +6,19 @@
   "workspaces": [
     "packages/shared",
     "packages/netcode",
-    "services/server"
+    "services/server",
+    "apps/client"
   ],
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
-    "build": "tsc -b && npm run build:lab -w @sticxcape/server",
-    "typecheck": "tsc -b && tsc -p tsconfig.check.json",
+    "build": "tsc -b && npm run build:lab -w @sticxcape/server && npm run build -w @sticxcape/client",
+    "typecheck": "tsc -b && tsc -p tsconfig.check.json && tsc -p apps/client/tsconfig.json && tsc -p apps/client/tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "npm run dev -w @sticxcape/server",
+    "dev:client": "npm run dev -w @sticxcape/client",
     "start": "npm run start -w @sticxcape/server",
     "bots": "node --conditions=source services/server/scripts/bots.ts",
     "clean": "tsc -b --clean"
