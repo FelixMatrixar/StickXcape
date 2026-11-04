@@ -3,7 +3,7 @@
  * parry, hit reactions, launches, knockdowns, dashes. Keyframes are written as world angles in
  * degrees; every animated pose is computed from them per frame with integer maths only.
  */
-import { deg, fixedSin, lerpAngle, ONE, wrapAngle } from './fixed.ts';
+import { deg, fixedSin, lerpAngle, ONE, ratio, wrapAngle } from './fixed.ts';
 import { A0, createPose, groundBody, groundPose, HIP_LOCAL, J, ROOT_X, ROOT_Y, SHOULDER_LOCAL, type PoseSpec } from './skeleton.ts';
 
 /** A pose as world angles: rot, spine, head, arms (upper, fore), legs (thigh, shin, foot). */
@@ -49,6 +49,14 @@ const STAGGER = world({ spine: -20, head: -30, lUp: 38, lFore: 92, rUp: -32, rFo
 const STAGGER_B = world({ spine: -10, head: -18, lUp: 70, lFore: 140, rUp: 10, rFore: 70, lThigh: 156, lShin: 170, lFoot: 98, rThigh: 206, rShin: 212, rFoot: 116 });
 const DASH = world({ spine: 28, head: 16, lUp: 162, lFore: 84, rUp: 222, rFore: 172, lThigh: 128, lShin: 172, lFoot: 100, rThigh: 214, rShin: 240, rFoot: 200 });
 const BACKDASH = world({ spine: -8, head: -4, lUp: 132, lFore: 30, rUp: 152, rFore: 16, lThigh: 172, lShin: 188, lFoot: 98, rThigh: 208, rShin: 196, rFoot: 104 });
+// Grabs, throws, guard breaks and get-up rolls.
+const GRAB_REACH = world({ spine: 20, head: 12, lUp: 92, lFore: 84, rUp: 98, rFore: 86, lThigh: 138, lShin: 178, lFoot: 95, rThigh: 208, rShin: 218, rFoot: 110 });
+const GRAB_MISS = world({ spine: 28, head: 18, lUp: 114, lFore: 50, rUp: 120, rFore: 56, lThigh: 138, lShin: 180, lFoot: 95, rThigh: 206, rShin: 216, rFoot: 108 });
+const THROW_LIFT = world({ spine: -12, head: -6, lUp: 26, lFore: 8, rUp: 36, rFore: 18, lThigh: 162, lShin: 176, lFoot: 95, rThigh: 200, rShin: 212, rFoot: 104 });
+const THROW_SLAM = world({ spine: 48, head: 30, lUp: 150, lFore: 128, rUp: 158, rFore: 134, lThigh: 128, lShin: 182, lFoot: 95, rThigh: 214, rShin: 226, rFoot: 116 });
+const THROWN = world({ spine: 4, head: -24, lUp: 40, lFore: 104, rUp: -40, rFore: 12, lThigh: 140, lShin: 118, lFoot: 60, rThigh: 196, rShin: 158, rFoot: 128 });
+const GUARD_BREAK = world({ spine: -26, head: -40, lUp: 30, lFore: 72, rUp: -36, rFore: 20, lThigh: 158, lShin: 166, lFoot: 96, rThigh: 214, rShin: 214, rFoot: 120 });
+const CURL = world({ spine: 62, head: 88, lUp: 128, lFore: 64, rUp: 132, rFore: 70, lThigh: 58, lShin: 168, lFoot: 110, rThigh: 64, rShin: 172, rFoot: 112 });
 const WIN = world({ spine: -4, head: -10, lUp: 160, lFore: 8, rUp: 4, rFore: 2, lThigh: 165, lShin: 178, lFoot: 95, rThigh: 196, rShin: 200, rFoot: 100 });
 
 const scratchA = new Int32Array(WORLD_SIZE);
@@ -112,6 +120,11 @@ export const P = {
   backdash: 18,
   koDown: 19,
   win: 20,
+  grab: 21,
+  throw: 22,
+  thrown: 23,
+  guardBreak: 24,
+  roll: 25,
 } as const;
 
 const DEG = deg(1);
@@ -236,9 +249,54 @@ export function builtinPose(out: Int32Array, kind: number, t: number, param = 0,
       scratchA[W.rUp] = WIN[W.rUp] + Math.floor((fixedSin(t * 2400) * 8 * DEG) / ONE);
       return finish(scratchA, out);
     }
+    case P.grab: {
+      // param: frame the reach lands, param2: frame the grab window closes.
+      if (t < param) blendWorld(STANCE, GRAB_REACH, ratio(t, param), scratchA);
+      else if (t < param2) scratchA.set(GRAB_REACH);
+      else if (t < param2 + 6) blendWorld(GRAB_REACH, GRAB_MISS, ratio(t - param2, 6), scratchA);
+      else blendWorld(GRAB_MISS, STANCE, clampRatio(ratio(t - param2 - 6, 24)), scratchA);
+      return finish(scratchA, out);
+    }
+    case P.throw:
+      // param: the slam frame, param2: frames the throw lasts. Lift, swing over, slam, recover.
+      if (t < 10) blendWorld(GRAB_REACH, THROW_LIFT, ratio(t, 10), scratchA);
+      else if (t < param) blendWorld(THROW_LIFT, THROW_SLAM, ratio(t - 10, param - 10), scratchA);
+      else blendWorld(THROW_SLAM, STANCE, clampRatio(ratio(t - param, param2 - param)), scratchA);
+      return finish(scratchA, out);
+    case P.thrown: {
+      // Tumbling over the thrower: a half turn on the way down.
+      scratchA.set(THROWN);
+      rotateWorld(scratchA, -Math.min(t, 20) * 1640);
+      const flail = Math.floor((fixedSin(t * 6000) * 16 * DEG) / ONE);
+      scratchA[W.lUp] += flail;
+      scratchA[W.rUp] -= flail;
+      return finish(scratchA, out, true);
+    }
+    case P.guardBreak: {
+      const w = (ONE + fixedSin(t * 3000)) >> 1;
+      blendWorld(GUARD_BREAK, STAGGER_B, w >> 1, scratchA);
+      return finish(scratchA, out);
+    }
+    case P.roll: {
+      // param: frames the roll lasts, param2: +1 rolls forward, -1 rolls back. One full turn, then unfurl.
+      const total = Math.max(1, param);
+      scratchA.set(CURL);
+      const turn = Math.trunc((Math.min(t, total) * 65536) / total);
+      rotateWorld(scratchA, param2 >= 0 ? turn : -turn);
+      if (t > total - 6) {
+        blendWorld(scratchA, CROUCH, ratio(t - (total - 6), 6), scratchB);
+        return finish(scratchB, out, true);
+      }
+      return finish(scratchA, out, true);
+    }
     default:
       return finish(STANCE, out);
   }
+}
+
+/** Turns the whole body by an angle, as if it were rigid. */
+function rotateWorld(w: Int32Array, angle: number): void {
+  for (let i = 0; i < WORLD_SIZE; i++) w[i] = wrapAngle(w[i] + angle);
 }
 
 /** The fighting stance as a pose, for blending moves in and out. */

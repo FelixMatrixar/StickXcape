@@ -16,7 +16,8 @@ import { h, press, stagger, svg, tilt, toast } from '../ui/dom.ts';
 import { ICON } from '../ui/icons.ts';
 
 export function traitTags(move: MoveFile): HTMLElement[] {
-  const tags = [h('span', { class: `tag tag-${move.height}`, text: move.height })];
+  const glyph = move.height === 'high' ? '▲' : move.height === 'low' ? '▼' : '●';
+  const tags = [h('span', { class: `tag tag-${move.height}` }, h('span', { class: 'tag-glyph', text: glyph, attrs: { 'aria-hidden': 'true' } }), move.height)];
   if (move.slot === 'heavy' || move.slot === 'special') tags.push(h('span', { class: 'tag tag-heavy', text: 'Heavy' }));
   else if (move.slot === 'light') tags.push(h('span', { class: 'tag', text: 'Light' }));
   return tags;

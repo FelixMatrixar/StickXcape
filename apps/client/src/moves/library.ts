@@ -12,6 +12,8 @@ export interface StoredMove {
   description: string | null;
   /** How clean the capture was, 0..1 (higher is smoother). */
   quality: number | null;
+  /** An idle stance (LS-12) is kept here too, but never offered as a fighting move. */
+  kind?: 'move' | 'idle';
 }
 
 const DB = 'sticxcape';
@@ -64,8 +66,9 @@ class MoveLibrary {
     return this.items;
   }
 
+  /** Fighting moves only; idle stances are left out. */
   files(): MoveFile[] {
-    return this.items.map((item) => item.move);
+    return this.items.filter((item) => item.kind !== 'idle').map((item) => item.move);
   }
 
   get(id: string): StoredMove | undefined {

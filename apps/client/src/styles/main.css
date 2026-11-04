@@ -448,19 +448,25 @@ h3 {
   color: var(--ink-2);
 }
 
+/* Height tags: lilac, cream and mint stay apart for colour-blind players; the arrow says it too. */
 .tag-high {
-  background: #ffe1d6;
-  color: #a12b16;
+  background: #f2c4ff;
+  color: #5b2a86;
 }
 
 .tag-mid {
-  background: #fff1c9;
-  color: #8a5a00;
+  background: #fff4cf;
+  color: #6b4a00;
 }
 
 .tag-low {
-  background: #d9ecff;
-  color: #1c4b8f;
+  background: #c6f0e8;
+  color: #0d5c4c;
+}
+
+.tag-glyph {
+  margin-right: 3px;
+  font-size: 8px;
 }
 
 .tag-heavy {
@@ -1532,6 +1538,64 @@ input[type='range'].slider {
   }
 }
 
+.meters {
+  display: flex;
+  gap: 5px;
+  width: 74%;
+}
+
+.hud-side.right .meters {
+  flex-direction: row-reverse;
+}
+
+.meter-bar {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(20, 16, 18, 0.5);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  overflow: hidden;
+  transform: skewX(-18deg);
+}
+
+.hud-side.right .meter-bar {
+  transform: skewX(18deg);
+}
+
+.meter-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  transform: scaleX(var(--v, 1));
+  transition: transform 0.12s ease-out;
+}
+
+.hud-side.right .meter-fill {
+  transform-origin: right;
+}
+
+.meter-bar.stamina .meter-fill {
+  background: linear-gradient(90deg, #f2b134, #ffd770);
+}
+
+.meter-bar.guard .meter-fill {
+  background: linear-gradient(90deg, #4f7cff, #a8c0ff);
+}
+
+.meter-bar.is-low .meter-fill {
+  filter: saturate(0.25) brightness(0.8);
+}
+
+.meter-bar.is-broken {
+  border-color: #ff6a52;
+  animation: blink 0.4s ease-in-out infinite;
+}
+
+.meter-bar.is-pulse {
+  animation: bar-shake 0.3s ease;
+}
+
 .hud-dots {
   display: flex;
   gap: 6px;
@@ -1894,6 +1958,97 @@ input[type='range'].slider {
     transform: scale(1.5);
     opacity: 0;
   }
+}
+
+.controls.is-desktop .cbtn,
+.controls.is-desktop .stick {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stick-zone.is-fixed {
+  border-radius: 50%;
+}
+
+/* Arranging the controls. */
+.controls-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 76;
+  background: radial-gradient(120% 90% at 50% 30%, #3a2d3a, #160f17);
+  animation: fade-in 0.25s ease both;
+  touch-action: none;
+}
+
+.controls-editor.is-leaving {
+  animation: fade-out 0.22s ease forwards;
+}
+
+.editor-floor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 74%;
+  bottom: 0;
+  background: linear-gradient(#3b2f3b, #221a23);
+  border-top: 2px solid rgba(255, 214, 190, 0.25);
+}
+
+.controls.is-editing .cbtn,
+.controls.is-editing .stick {
+  cursor: grab;
+  outline: 2px dashed rgba(255, 255, 255, 0.55);
+  outline-offset: 5px;
+  animation: wiggle 2.4s ease-in-out infinite;
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.controls.is-editing .stick-zone {
+  pointer-events: none;
+}
+
+.controls.is-editing .is-dragging {
+  cursor: grabbing;
+  animation: none;
+  transform: scale(1.12);
+  outline-color: #f2b134;
+  z-index: 2;
+}
+
+@keyframes wiggle {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  25% {
+    rotate: -2deg;
+  }
+  75% {
+    rotate: 2deg;
+  }
+}
+
+.editor-bar {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--safe-t) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 14px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  max-width: calc(100vw - 24px);
+  animation: toast-in 0.4s var(--spring) both;
+}
+
+.editor-hint {
+  font: 700 13px/1.3 var(--ui);
 }
 
 .keys-legend {

@@ -13,6 +13,7 @@ import { PracticeBot, type BotLevel } from '../src/engine/bot.ts';
 import { FightSim, PHASE } from '../src/engine/sim.ts';
 import { defaultMoves } from '../src/moves/defaults.ts';
 import { completeLoadout } from '../src/moves/loadout.ts';
+import { arenaFileById, simArena } from '../src/render/arena-files.ts';
 
 const args = process.argv.slice(2);
 const option = (name: string, fallback: string) => {
@@ -29,10 +30,6 @@ if (!code) throw new Error(`Not a room link or code: ${target}`);
 const server = option('server', 'http://localhost:8080');
 const level = option('level', 'normal') as BotLevel;
 
-const ARENAS: Record<string, { width: number; spawns: [number, number] }> = {
-  rooftop: { width: 10, spawns: [3.6, 6.4] },
-  dojo: { width: 10, spawns: [3.6, 6.4] },
-};
 
 const services = new ServicesClient({ baseUrl: server });
 const client = new RelayClient(await connectWebSocket(services.relayUrl));
@@ -57,7 +54,8 @@ client.on('start', (session) => play(session));
 function play(session: LockstepSession): void {
   const [left, right] = session.fighters;
   const loadoutOf = (player: number) => (player === client.player ? loadout : completeLoadout(client.loadouts.get(player) ?? defaultMoves()));
-  const arena = ARENAS[session.arenaId ?? 'rooftop'] ?? ARENAS.rooftop!;
+  // The same arena file the browser uses, so the edges match.
+  const arena = simArena(arenaFileById(session.arenaId));
   const sim = new FightSim({ seed: session.seed, arena, loadouts: [loadoutOf(left), loadoutOf(right)] });
   const bot = new PracticeBot(session.localSide, session.seed ^ 0x51, level);
   let reported = false;
