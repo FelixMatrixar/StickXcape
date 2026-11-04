@@ -25,29 +25,32 @@ The game client is the phone web app: everything players see, touch and hear, pl
 
 ## Progress
 
-Updated 2026-11-04. The code is in `apps/client` on the `frontend-mvp` branch. 15 client tests pass, and two full online matches between the browser and a Node bot ran through the relay with 194 state checks and no desync. Nothing has been tried on real phones yet.
+Updated 2026-11-04. The code is in `apps/client` on the `frontend-mvp` branch. 32 client tests pass, including a determinism test with grabs and drop edges, and two full online matches between the browser and a Node bot ran through the relay with 194 state checks and no desync. Nothing has been tried on real phones yet.
 
 | Module | Status | Code |
 | --- | --- | --- |
 | Camera and tracking | Written: MediaPipe Pose Landmarker 0.10.21 loads from the CDN only when Move Studio opens; GPU with a CPU fallback; HTTPS and permission errors explained. Not yet run against a real camera | `src/capture` |
-| Move Studio | Tried in a browser with demo takes: slot picker, consent and safety card, framing checks, 3-2-1, up to 5 takes with the cleanest flagged, trim, mirror, speed (MS-8), retake, save, Meta AI name | `src/screens/studio.ts` |
-| Cleanup | Tested on noisy synthetic takes: 60 fps resampling, gap filling, facing, side-swap repair, per-joint smoothing, fixed bone lengths, grounding, foot locking, speed cap, auto-trim, stance blending, striking limb, active frames and height. About 8 ms per take on a laptop | `src/moves/cleanup.ts` |
+| Move Studio | Tried in a browser with demo takes: slot picker, consent and safety card, framing checks, 3-2-1, up to 5 takes with the cleanest flagged, trim, mirror, speed (MS-8), retake, save, Meta AI name, half-speed recording that plays back at full speed, the player's own idle stance (LS-12) | `src/screens/studio.ts` |
+| Cleanup | Tested on noisy synthetic takes: 60 fps resampling, gap filling, facing, side-swap repair, per-joint smoothing, fixed bone lengths, grounding, foot locking, speed cap, auto-trim, stance blending, striking limb, active frames and height, a physics check that bends joints past human limits back to the nearer limit (MS-10). About 8 ms per take on a laptop | `src/moves/cleanup.ts` |
 | Move library | Written: IndexedDB with an in-memory fallback; default moveset of 9 keyframed moves in the real move format | `src/moves` |
-| Fight engine | Tested: Q16.16 only, 60 Hz, capsule hits from limb paths, block, parry, high/mid/low, slot power, armor, counter-hits, combo scaling, swing-direction knockback, launches, knockdowns, rounds, state hash. 0.005 ms a frame on a laptop | `src/engine` |
-| Practice bot | Tested: easy, normal and hard, with reaction delay; blocks, parries, punishes, combos | `src/engine/bot.ts` |
-| Renderer | Tried in a browser: ink stick men, 2 painted arenas with parallax, camera dolly, shake, zoom punch, sparks, ink bursts, shield arcs, parry rings, trails, smears, dust, squash and stretch, KO ragdoll with an inverted frame and slow motion | `src/render` |
+| Fight engine | Tested: Q16.16 only, 60 Hz, capsule hits from limb paths, block, parry, high/mid/low, slot power, armor, counter-hits, combo scaling, swing-direction knockback, launches, knockdowns, get-up rolls, grabs and throws (CB-6), stamina and guard meters with guard breaks (CB-7), ring-outs off drop edges (CB-8), rounds, state hash. 0.005 ms a frame on a laptop | `src/engine` |
+| Practice bot | Tested: easy, normal and hard, with reaction delay; blocks, parries, punishes, combos, grabs blockers, rolls after a knockdown, and saves stamina and guard | `src/engine/bot.ts` |
+| Renderer | Tried in a browser: ink stick men, 2 painted arenas with parallax, camera dolly, shake, zoom punch, sparks, ink bursts, shield arcs, parry rings, trails, smears, dust, squash and stretch, KO ragdoll with an inverted frame and slow motion, ring-out falls in slow motion, throw slams, guard-break shards, stamina and guard bars, recorded idle stances | `src/render` |
 | Audio and vibration | Written, not yet checked by ear: every sound synthesized; layered impacts, whooshes from limb speed, parry clang, footsteps, stingers, fight and menu music with ducking and a final-round layer; vibration patterns for Android | `src/audio`, `src/app/haptics.ts` |
-| Screens | Tried in a browser, including at phone size: title, nickname, record or skip, home, Move Studio, loadout, room, fight, results with stats and coach tips, settings with comfort sliders (GF-5) | `src/screens`, `src/ui` |
+| Screens | Tried in a browser, including at phone size: title, nickname, record or skip, home, Move Studio, loadout, room, fight, results with stats and coach tips, settings with comfort sliders (GF-5), two-thumb or one-thumb controls (either hand) and buttons you can drag into place | `src/screens`, `src/ui` |
 
 **Decisions settled in code.** The move format belongs to the frontend, so the backend owner should review these:
 
 - Each joint angle turns the bone that ends at that joint, relative to its parent bone. The pelvis angle turns the whole body. World angle 0 points up and a quarter turn points forward; moves face forward. Root x is the forward offset from the move's start and root y the pelvis height above the floor, both in millimetres. Bone lengths are in `src/engine/skeleton.ts`.
 - Phones always send a full nine-move loadout in this order: light, light 2, heavy, heavy 2, low, special, defense, taunt, victory. Missing places are filled with the default moveset, which both phones generate identically.
-- Arena ids are `rooftop` and `dojo`: 10 m wide, fighters start at 3.6 m and 6.4 m.
+- Arena ids are `rooftop` and `dojo`: 10 m wide, fighters start at 3.6 m and 6.4 m. The rooftop drops away on both sides, and falling off ends the round as a ring-out; the dojo has walls.
 - Light hit stun is 17 frames rather than 12, so a light hit can cancel into a heavy (14-frame startup). Light hit stop is 4 frames.
-- Light 2 and Heavy 2 are a direction plus L or H; Low is down plus H; Taunt is down plus D; a double tap dashes.
+- Light 2 and Heavy 2 are a direction plus L or H; Low is down plus H; Taunt is down plus D; a double tap dashes. A grab is L and H within 2 frames: 8 frames of startup and 0.95 m of reach. It beats block and parry but can't catch anyone in the air, attacking or in hit stun, and two grabs at once clash. A throw does 100 damage and knocks down.
+- Stamina and guard each run from 0 to 1000. A heavy costs 220 stamina and a special 330, and neither starts without enough. Holding block drains guard slowly and blocked hits drain more; an empty guard breaks for 40 frames. Both refill after a short pause.
+- The physics check only touches recordings. In local angles: elbow −170° to 30°, knee −25° to 165°, ankle −150° to 25°, head ±80°, and the thigh 15° to 250° from the spine line. The default moves are tested against the same limits.
+- An idle stance is kept with the player's moves but never sent: each player sees their own, and opponents get the standard stance.
 
-**Still to do:** a real camera on real phones (iPhone Safari, Android Chrome), listening to the mix, live Meta AI names with a key, and the launch items not started: grabs, stamina and guard meters, ring-outs and ledges, active-ragdoll hit reactions, photo arenas, the cloud move library and quick match.
+**Still to do:** a real camera on real phones (iPhone Safari, Android Chrome), listening to the mix, live Meta AI names with a key, and the launch items not started: active-ragdoll hit reactions (knockdowns use canned poses and the ragdoll only plays for KOs and ring-outs), photo arenas, the cloud move library, quick match and the clear-space check before recording.
 
 ## Modules
 
