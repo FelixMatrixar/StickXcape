@@ -4,7 +4,10 @@
  * LockstepDriver or RollbackDriver) with ToySim standing in for the fight.
  */
 import {
+  AccountClient,
+  ApiRequestError,
   connectWebSocket,
+  passkeysSupported,
   RelayClient,
   RelayError,
   ServicesClient,
@@ -432,6 +435,74 @@ function updateStats(now: number): void {
   else setStat('s-hash', checks > 0 ? `${checks} sent, all matching` : '–', checks > 0 ? 'good' : '');
   setStat('s-result', end ? resultText(end) : 'Playing', end ? (end.reason === 'finished' ? 'good' : 'bad') : '');
 }
+
+// The account panel: passkeys and the cloud move library, to try on phones before the game has them.
+
+const accounts = new AccountClient();
+const accountButtons = {
+  create: $<HTMLButtonElement>('account-create'),
+  signIn: $<HTMLButtonElement>('account-signin'),
+  save: $<HTMLButtonElement>('account-save'),
+  signOut: $<HTMLButtonElement>('account-signout'),
+};
+
+function showAccountButtons(signedIn: boolean | null): void {
+  accountButtons.create.hidden = accountButtons.signIn.hidden = signedIn !== false;
+  accountButtons.save.hidden = accountButtons.signOut.hidden = signedIn !== true;
+}
+
+async function refreshAccount(): Promise<void> {
+  const status = $('account-status');
+  if (!passkeysSupported()) {
+    showAccountButtons(null);
+    status.textContent = 'Passkeys need HTTPS: they work on staging or on localhost, not on a Wi-Fi address like this one.';
+    return;
+  }
+  const { account, passkeys } = await accounts.status();
+  if (!passkeys) {
+    showAccountButtons(null);
+    status.textContent = 'This server has accounts switched off, or is not on a domain name.';
+    return;
+  }
+  showAccountButtons(account !== null);
+  if (!account) {
+    status.textContent = 'Not signed in. Make a passkey under your nickname, or sign in with one you made before.';
+    return;
+  }
+  const library = await accounts.getLibrary();
+  const count = library.moves.length;
+  status.textContent = `Signed in as ${account.name}. Cloud library: ${count} ${count === 1 ? 'move' : 'moves'}.`;
+}
+
+function accountAction(button: HTMLButtonElement, action: () => Promise<unknown>): void {
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await action();
+      await refreshAccount();
+    } catch (err) {
+      $('account-status').textContent = accountErrorText(err);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function accountErrorText(err: unknown): string {
+  if (err instanceof ApiRequestError) return err.message;
+  // The browser rejects with NotAllowedError when the prompt is cancelled or times out.
+  if (err instanceof DOMException && err.name === 'NotAllowedError') return 'The passkey prompt was cancelled or timed out.';
+  if (err instanceof DOMException && err.name === 'InvalidStateError') return 'This phone already has a passkey for this site; sign in with it instead.';
+  return err instanceof Error ? err.message : String(err);
+}
+
+accountAction(accountButtons.create, () => accounts.createAccount(nicknameInput.value));
+accountAction(accountButtons.signIn, () => accounts.signIn());
+accountAction(accountButtons.save, () =>
+  accounts.saveMove({ move: toyLoadout()[0]!, kind: 'move', description: "The relay lab's toy jab", quality: null, createdAt: Date.now() }),
+);
+accountAction(accountButtons.signOut, () => accounts.signOut());
+refreshAccount().catch((err: unknown) => ($('account-status').textContent = accountErrorText(err)));
 
 // One loop drives the match, the drawing and the stats.
 

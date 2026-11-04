@@ -38,6 +38,7 @@
     body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
     main { max-width: 960px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
     h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 4px; }
     .muted { color: var(--muted); }
     .small { font-size: 13px; }
     header p { margin: 2px 0 14px; }
@@ -115,6 +116,17 @@
       <div><dt>Result</dt><dd id="s-result">–</dd></div>
     </dl>
     <p class="muted small">Keys: ← → or A D to walk, ↑ W or Space to jump, J or Enter to jab. A backgrounded tab stops sending inputs, so the relay ends its match after 15 seconds.</p>
+
+    <section id="account" class="card">
+      <h2>Account <span class="muted small">(launch preview)</span></h2>
+      <p id="account-status" class="small" role="status">Checking…</p>
+      <div class="row">
+        <button id="account-create" hidden>Make a passkey</button>
+        <button id="account-signin" hidden>Sign in with a passkey</button>
+        <button id="account-save" hidden>Save the toy move to my cloud library</button>
+        <button id="account-signout" hidden>Sign out</button>
+      </div>
+    </section>
   </main>
   <script type="module" src="./lab.js"></script>
 </body>

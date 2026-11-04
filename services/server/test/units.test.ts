@@ -128,6 +128,12 @@ describe('loadConfig', () => {
     expect(config).toMatchObject({ env: 'development', host: '0.0.0.0', port: 8080, publicUrl: null, trustProxy: 0, allowedOrigins: [], tls: null });
     expect(config.ai).toMatchObject({ apiKey: null, model: 'muse-spark-1.1', reasoningEffort: 'minimal', timeoutMs: 4500, moveNamesPerDay: 30, matchTipsPerDay: 60 });
     expect(config.labRoot).not.toBeNull();
+    // Accounts are on in development (a gitignored file), and off in tests and production unless DATABASE_FILE says where.
+    expect(config.accounts.databaseFile).toMatch(/services[\\/]server[\\/]data[\\/]sticxcape\.db$/);
+    expect(config.accounts).toMatchObject({ maxMoves: 200, passkeyLimitPerIp: 30, sessionTtlMs: 180 * 24 * 60 * 60 * 1000 });
+    expect(loadConfig({ NODE_ENV: 'test' }).accounts.databaseFile).toBeNull();
+    expect(loadConfig({ NODE_ENV: 'production' }).accounts.databaseFile).toBeNull();
+    expect(loadConfig({ NODE_ENV: 'production', DATABASE_FILE: '/data/sticxcape.db' }).accounts.databaseFile).toBe('/data/sticxcape.db');
   });
 
   it('reads and checks settings', () => {
@@ -156,5 +162,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ LAB: 'maybe' })).toThrow('LAB must be true or false');
     // Muse Spark answers "none" with HTTP 400, so it would turn every AI call into a fallback.
     expect(() => loadConfig({ AI_REASONING_EFFORT: 'none' })).toThrow('AI_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh, max');
+    expect(() => loadConfig({ LIBRARY_MAX_MOVES: '0' })).toThrow(/LIBRARY_MAX_MOVES/);
   });
 });

@@ -16,10 +16,18 @@ if (config.monitoring.metricsPort !== null) {
 }
 
 app.log.info(
-  { port: config.port, publicUrl: config.publicUrl, ai: services.ai.mode, lab: config.labRoot !== null, version: config.serverVersion },
+  {
+    port: config.port,
+    publicUrl: config.publicUrl,
+    ai: services.ai.mode,
+    accounts: services.accounts !== null,
+    lab: config.labRoot !== null,
+    version: config.serverVersion,
+  },
   'SticXcape services ready',
 );
 if (services.ai.mode === 'canned') app.log.warn('MODEL_API_KEY is not set, so move names and tips are canned answers');
+if (!services.accounts) app.log.warn('DATABASE_FILE is not set, so accounts and the cloud move library are off');
 
 let closing = false;
 async function shutdown(signal: string): Promise<void> {

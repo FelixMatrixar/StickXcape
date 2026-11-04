@@ -1,12 +1,15 @@
 # Staging on Fly.io for playtests (Backend PRD, week 3). Rooms live in memory, so this runs one
 # machine in one region: a second machine would split the rooms between them. A deploy restarts
-# it, which also resets staging; phones in a room get server_shutdown and reload.
+# it, which also resets staging's rooms; phones in a room get server_shutdown and reload.
+# Accounts and cloud move libraries survive deploys: they live in SQLite on the volume below.
 #
-# First time (pick your own app name and set PUBLIC_URL to match):
+# First time (pick your own app name and set PUBLIC_URL to match; passkeys are tied to its domain):
 #   fly launch --no-deploy --copy-config --name sticxcape-staging
 #   fly secrets set MODEL_API_KEY=<test key> ADMIN_TOKEN=<password for /admin>
 #   fly deploy
 #   fly scale count 1
+# The first deploy makes the 1 GB volume; `fly volumes list` shows it. If a deploy says the volume
+# is missing, make it with `fly volumes create sticxcape_data --region sin --size 1` and deploy again.
 # After that, `fly deploy` or the "Deploy staging" GitHub workflow.
 
 app = "sticxcape-staging"
@@ -29,6 +32,14 @@ kill_timeout = "15s"
   # Staging uses a test key with low limits (Integration PRD: environments).
   AI_MOVE_NAMES_PER_DAY = "15"
   AI_MATCH_TIPS_PER_DAY = "30"
+  # Accounts and cloud move libraries, on the volume mounted at /data.
+  DATABASE_FILE = "/data/sticxcape.db"
+
+# Fly snapshots the volume daily and keeps 5 days of snapshots (`fly volumes snapshots list`).
+[mounts]
+  source = "sticxcape_data"
+  destination = "/data"
+  initial_size = "1GB"
 
 [http_service]
   internal_port = 8080

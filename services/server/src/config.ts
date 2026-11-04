@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CLIENT_VERSION } from '@sticxcape/shared';
+import { CLIENT_VERSION, LIBRARY_MAX_MOVES } from '@sticxcape/shared';
 
 export interface RoomsConfig {
   /** Rooms the server holds at once before refusing new ones. */
@@ -50,6 +50,18 @@ export interface AiConfig {
   cacheTtlMs: number;
 }
 
+export interface AccountsConfig {
+  /** SQLite file for accounts and cloud move libraries, ':memory:' for tests, or null to turn accounts off. */
+  databaseFile: string | null;
+  /** Moves one cloud library may hold. */
+  maxMoves: number;
+  /** Passkey sign-ups and sign-ins one IP address may start per window. */
+  passkeyLimitPerIp: number;
+  passkeyWindowMs: number;
+  /** How long a sign-in lasts without being used. */
+  sessionTtlMs: number;
+}
+
 export interface MonitoringConfig {
   /** Password for /admin and /metrics (HTTP Basic, user "admin"). */
   adminToken: string | null;
@@ -83,11 +95,15 @@ export interface Config {
   rooms: RoomsConfig;
   relay: RelayConfig;
   ai: AiConfig;
+  accounts: AccountsConfig;
   monitoring: MonitoringConfig;
 }
 
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DEFAULT_LAB_ROOT = fileURLToPath(new URL('../dist/lab/', import.meta.url));
+/** In development accounts live in services/server/data (gitignored). Production sets DATABASE_FILE on its volume. */
+const DEV_DATABASE_FILE = fileURLToPath(new URL('../data/sticxcape.db', import.meta.url));
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Muse Spark 1.1 answered in about 2.3 s (median) in live tests on 2026-11-04, against 3.3 s for
@@ -157,6 +173,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       perIpMultiplier: 10,
       cacheEntries: 5000,
       cacheTtlMs: 24 * 60 * 60 * 1000,
+    },
+    accounts: {
+      databaseFile: env.DATABASE_FILE || (mode === 'development' ? DEV_DATABASE_FILE : null),
+      maxMoves: int(env, 'LIBRARY_MAX_MOVES', LIBRARY_MAX_MOVES, 1, 10_000),
+      passkeyLimitPerIp: int(env, 'PASSKEYS_PER_IP_PER_10_MIN', 30, 1, 10_000),
+      passkeyWindowMs: 10 * 60 * 1000,
+      sessionTtlMs: 180 * DAY_MS,
     },
     monitoring: {
       adminToken: env.ADMIN_TOKEN || null,

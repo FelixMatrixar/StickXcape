@@ -9,4 +9,5 @@ export * from './arena.ts';
 export * from './rooms.ts';
 export * from './messages.ts';
 export * from './api.ts';
+export * from './account.ts';
 export { cleanText } from './validate.ts';

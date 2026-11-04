@@ -21,5 +21,6 @@ export {
   type MoveNameSuggestion,
   type ServicesOptions,
 } from './services.ts';
+export { AccountClient, browserPasskeys, passkeysSupported, type AccountClientOptions, type PasskeyAuthenticator } from './account.ts';
 export { ToySim, type ToySnapshot } from './toy-sim.ts';
 export { ToyMatch, toyBotInput, toyLoadout, type ToyMatchOptions } from './toy-match.ts';

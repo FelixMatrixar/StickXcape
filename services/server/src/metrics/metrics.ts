@@ -49,6 +49,11 @@ export function createMetrics() {
     relayForward: registry.histogram('sticxcape_relay_forward_seconds', 'Time the relay holds an input before passing it on (sampled)', [
       0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
     ]),
+    accountsCreated: registry.counter('sticxcape_accounts_created_total', 'Accounts made with a passkey'),
+    passkeyChecks: registry.counter<'ceremony' | 'outcome'>('sticxcape_passkey_checks_total', 'Passkey sign-ups and sign-ins, by ceremony (register, login) and outcome (ok, rejected)', [
+      'ceremony',
+      'outcome',
+    ]),
     aiRequests: registry.counter<'call' | 'outcome'>('sticxcape_ai_requests_total', 'AI gateway requests, by call and outcome', ['call', 'outcome']),
     aiLatency: registry.histogram<'call'>('sticxcape_ai_response_seconds', "Meta Model API response time, successes and failures", [
       0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 7.5,

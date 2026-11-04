@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import type { Server as HttpsServer } from 'node:https';
 import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyHttpsOptions, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
+import { registerAccountRoutes } from './accounts/routes.ts';
+import { AccountStore } from './accounts/store.ts';
 import { AiGateway } from './ai/gateway.ts';
 import { registerAiRoutes } from './ai/routes.ts';
 import type { Config } from './config.ts';
@@ -24,6 +26,8 @@ export interface Services {
   rooms: RoomStore;
   relay: Relay;
   ai: AiGateway;
+  /** Accounts and cloud move libraries; null when accounts are off (no DATABASE_FILE). */
+  accounts: AccountStore | null;
   metrics: Metrics;
   alert: ErrorRateAlert;
 }
@@ -73,8 +77,10 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   });
   const relay = new Relay({ config: config.relay, minClientVersion: config.minClientVersion, rooms, metrics, log: app.log, now });
   const ai = new AiGateway({ config: config.ai, metrics, alert, log: app.log, fetch: fetchFn, now });
+  const accounts = config.accounts.databaseFile ? new AccountStore(config.accounts.databaseFile, now) : null;
 
   metrics.registry.gauge('sticxcape_rooms_active', 'Rooms held right now', () => rooms.size);
+  if (accounts) metrics.registry.gauge('sticxcape_accounts', 'Accounts stored', () => accounts.accountCount);
   metrics.registry.gauge('sticxcape_players_connected', 'Phones connected to the relay', () => relay.connectionCount);
   metrics.registry.gauge('sticxcape_matches_active', 'Matches being played right now', () => relay.matchCount);
   metrics.registry.gauge('sticxcape_ai_error_ratio', 'Share of AI calls that failed in the alert window', () => alert.stats().ratio);
@@ -88,6 +94,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   const roomLimiter = registerRoomRoutes(app, { config, rooms, metrics, now });
   registerRelayRoutes(app, { relay, allowedOrigins: config.allowedOrigins });
   registerAiRoutes(app, { gateway: ai });
+  const accountRoutes = registerAccountRoutes(app, { config, store: accounts, metrics, now });
   registerMonitoringRoutes(app, { config, metrics, rooms, relay, ai, alert });
   app.get('/version', async () => ({ minClientVersion: config.minClientVersion, serverVersion: config.serverVersion }));
   registerWeb(app, { webRoot: config.webRoot, labRoot: config.labRoot });
@@ -95,13 +102,16 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   const sweeper = setInterval(() => {
     rooms.sweep();
     roomLimiter.prune(now());
+    accountRoutes.prune(now());
+    accounts?.pruneSessions();
     alert.check();
   }, SWEEP_INTERVAL_MS);
   sweeper.unref();
   app.addHook('onClose', async () => {
     clearInterval(sweeper);
     metrics.close();
+    accounts?.close();
   });
 
-  return { app, services: { rooms, relay, ai, metrics, alert } };
+  return { app, services: { rooms, relay, ai, accounts, metrics, alert } };
 }

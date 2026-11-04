@@ -11,6 +11,13 @@ import {
   isHashFrame,
   isRoomCode,
   KEYFRAME_MAX_CHARS,
+  decodeBase64Url,
+  encodeBase64Url,
+  parseAccountName,
+  parseCloudMove,
+  parseLoadoutSelection,
+  parsePasskeyAssertion,
+  parsePasskeyRegistration,
   MAX_ROLLBACK_FRAMES,
   mirrorButtons,
   MOVE_FORMAT_VERSION,
@@ -188,6 +195,45 @@ describe('parseClientMessage', () => {
     const move = await sampleMove();
     expect(parse({ type: 'loadout', moves: [move] })).toEqual({ type: 'loadout', moves: [move] });
     expect(parse({ type: 'loadout', moves: [] })).toBeNull();
+  });
+});
+
+describe('accounts and the cloud library', () => {
+  it('encodes base64url without padding and decodes it strictly', () => {
+    expect(encodeBase64Url(new Uint8Array([0xfb, 0xff]))).toBe('-_8');
+    expect(encodeBase64Url(new Uint8Array([]))).toBe('');
+    expect(decodeBase64Url('-_8')).toEqual(new Uint8Array([0xfb, 0xff]));
+    expect(decodeBase64Url('-_8=')).toEqual(new Uint8Array([0xfb, 0xff]));
+    for (const bad of ['+/8', 'A', 'AB=C', 'A*B']) expect(decodeBase64Url(bad), bad).toBeNull();
+    const all = new Uint8Array(256).map((_, i) => i);
+    expect(decodeBase64Url(encodeBase64Url(all))).toEqual(all);
+  });
+
+  it('checks account names, cloud moves and loadouts', async () => {
+    expect(parseAccountName('  Ana  ')).toBe('Ana');
+    expect(parseAccountName('')).toBeNull();
+    const move = await sampleMove();
+    const input = { move, kind: 'idle', description: '  A  stance ', quality: 0.5, createdAt: 1 };
+    expect(parseCloudMove(input)).toEqual({ ...input, description: 'A stance' });
+    expect(parseCloudMove({ move, createdAt: 1 })).toEqual({ move, kind: 'move', description: null, quality: null, createdAt: 1 });
+    for (const bad of [{ ...input, kind: 'taunt' }, { ...input, quality: -0.1 }, { ...input, createdAt: '1' }, { ...input, move: { ...move, slot: 'kick' } }]) {
+      expect(parseCloudMove(bad)).toBeNull();
+    }
+    const id = '7a1c0de0-0000-4000-8000-000000000001';
+    expect(parseLoadoutSelection({ light1: id, victory: id })).toEqual({ light1: id, victory: id });
+    expect(parseLoadoutSelection({ Light: id })).toBeNull();
+    expect(parseLoadoutSelection(Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p${i}`, id])))).toBeNull();
+    expect(parseLoadoutSelection([id])).toBeNull();
+  });
+
+  it('shape-checks passkey answers', () => {
+    const registration = { id: 'abc', type: 'public-key', response: { clientDataJSON: 'e30', attestationObject: 'oA', transports: ['internal'] } };
+    expect(parsePasskeyRegistration(registration)).toEqual(registration);
+    expect(parsePasskeyRegistration({ ...registration, type: 'password' })).toBeNull();
+    expect(parsePasskeyRegistration({ ...registration, response: { ...registration.response, transports: [1] } })).toBeNull();
+    const assertion = { id: 'abc', type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'AA', signature: 'AA' } };
+    expect(parsePasskeyAssertion(assertion)).toEqual({ ...assertion, response: { ...assertion.response, userHandle: null } });
+    expect(parsePasskeyAssertion({ ...assertion, response: { ...assertion.response, signature: 1 } })).toBeNull();
   });
 });
 
