@@ -10,8 +10,9 @@
 # After that, `fly deploy` or the "Deploy staging" GitHub workflow.
 
 app = "sticxcape-staging"
-# The region nearest the playtesters; `fly platform regions` lists them.
-primary_region = "ams"
+# Singapore, nearest the playtesters in Southeast Asia. Phones far from the relay go past the
+# input delay's 6-frame cap and stall. `fly platform regions` lists the others.
+primary_region = "sin"
 kill_signal = "SIGTERM"
 kill_timeout = "15s"
 
