@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Button, FRAME_MS } from '@sticxcape/shared';
 import { LockstepDriver } from '../src/driver.ts';
-import { LockstepSession } from '../src/lockstep.ts';
+import { MatchSession } from '../src/session.ts';
 import { linkedSessions, START } from './helpers.ts';
 
-describe('LockstepSession', () => {
+describe('MatchSession with input delay', () => {
   it('runs the first inputDelay frames on neutral input, then waits for the opponent', () => {
     const { sessions, sent, deliver } = linkedSessions();
     const [left, right] = sessions;
@@ -103,7 +103,7 @@ describe('LockstepSession', () => {
       [5, 0, 2],
       [2, 1, 5],
     ]);
-    expect(() => new LockstepSession({ localPlayer: 3, start: START, send: () => {} })).toThrow(/not fighting/);
+    expect(() => new MatchSession({ localPlayer: 3, start: START, send: () => {} })).toThrow(/not fighting/);
   });
 });
 

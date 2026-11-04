@@ -62,4 +62,40 @@ export class ToySim {
   hash(): number {
     return hashInts([this.frame, ...this.x, ...this.y, ...this.vy, ...this.health, ...this.cooldown, this.rng.state]);
   }
+
+  /** Everything that decides the rest of the fight, for rollback netcode. */
+  save(): ToySnapshot {
+    return {
+      frame: this.frame,
+      x: [...this.x],
+      y: [...this.y],
+      vy: [...this.vy],
+      health: [...this.health],
+      cooldown: [...this.cooldown],
+      rng: this.rng.state,
+    };
+  }
+
+  load(snapshot: ToySnapshot): void {
+    this.frame = snapshot.frame;
+    for (const side of [0, 1] as const) {
+      this.x[side] = snapshot.x[side];
+      this.y[side] = snapshot.y[side];
+      this.vy[side] = snapshot.vy[side];
+      this.health[side] = snapshot.health[side];
+      this.cooldown[side] = snapshot.cooldown[side];
+    }
+    this.rng.state = snapshot.rng;
+  }
+}
+
+/** A saved moment of a ToySim. */
+export interface ToySnapshot {
+  readonly frame: number;
+  readonly x: readonly [number, number];
+  readonly y: readonly [number, number];
+  readonly vy: readonly [number, number];
+  readonly health: readonly [number, number];
+  readonly cooldown: readonly [number, number];
+  readonly rng: number;
 }

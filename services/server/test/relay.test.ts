@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { RelayError, ServicesClient, ToyMatch, toyLoadout, type LockstepSession, type RelayClient } from '@sticxcape/netcode';
-import { MAX_ROOM_PLAYERS, type ServerMessage } from '@sticxcape/shared';
+import { MAX_ROLLBACK_FRAMES, MAX_ROOM_PLAYERS, ROLLBACK_INPUT_DELAY, type ServerMessage } from '@sticxcape/shared';
 import {
   connect,
   createRoom,
@@ -209,7 +209,7 @@ describe('matches', () => {
     }
 
     const { metrics } = s.services;
-    expect(metrics.matchesStarted.get()).toBe(3);
+    expect(metrics.matchesStarted.get({ netcode: 'delay' })).toBe(3);
     expect(metrics.matchesEnded.get({ reason: 'finished' })).toBe(3);
     expect(metrics.matchesEnded.sum()).toBe(3);
     // Inputs still in flight when a match ends are dropped as not_in_match; nothing else should be.
@@ -384,6 +384,76 @@ describe('input delay', () => {
     const [anaSession] = await startMatch(ana, cy);
     expect(anaSession.fighters).toEqual([1, 3]);
     expect(anaStarts).toHaveLength(1);
+  });
+});
+
+describe('rollback', () => {
+  it('starts a rollback match with 2 frames of input delay when both fighters ask for it', async () => {
+    const s = await serve();
+    const { ana, bo } = await pairUp(s);
+    ana.rollback = true;
+    bo.rollback = true;
+    const [anaSession, boSession] = await startMatch(ana, bo);
+    expect(anaSession).toMatchObject({ rollback: MAX_ROLLBACK_FRAMES, inputDelay: ROLLBACK_INPUT_DELAY });
+    expect(boSession).toMatchObject({ rollback: MAX_ROLLBACK_FRAMES, inputDelay: ROLLBACK_INPUT_DELAY });
+    expect(s.services.metrics.matchesStarted.get({ netcode: 'rollback' })).toBe(1);
+  });
+
+  it('falls back to input delay when only one fighter asks', async () => {
+    const s = await serve();
+    const { ana, bo } = await pairUp(s);
+    ana.rollback = true;
+    const [anaSession] = await startMatch(ana, bo);
+    expect(anaSession).toMatchObject({ rollback: 0, inputDelay: 3 });
+    expect(s.services.metrics.matchesStarted.get({ netcode: 'delay' })).toBe(1);
+  });
+
+  it('passes sync reports to the other fighter in a rollback match, and drops them otherwise', async () => {
+    const s = await serve();
+    const { ana, bo } = await pairUp(s);
+    const [anaSession, boSession] = await startMatch(ana, bo);
+    ana.transport.send({ type: 'sync', lateness: 1.5 });
+    const dropped = () => s.services.metrics.relayDropped.get({ reason: 'not_in_match' });
+    await until(() => dropped() === 1);
+
+    const ended = nextEvent(ana, 'end');
+    anaSession.finish(1);
+    boSession.finish(1);
+    await ended;
+    ana.rollback = true;
+    bo.rollback = true;
+    const [, boRollback] = await startMatch(ana, bo);
+    const received = new Promise((resolve) => {
+      const receive = boRollback.receive.bind(boRollback);
+      boRollback.receive = (message) => {
+        if (message.type === 'sync') resolve(message);
+        receive(message);
+      };
+    });
+    ana.transport.send({ type: 'sync', lateness: -2.25 });
+    expect(await received).toEqual({ type: 'sync', lateness: -2.25 });
+    expect(dropped()).toBe(1);
+  });
+
+  it('plays rollback toy matches to the end with matching hashes', async () => {
+    const clock = new FakeClock();
+    const s = await serve(testConfig(), { now: clock.now });
+    const { ana, bo } = await pairUp(s);
+    ana.rollback = true;
+    bo.rollback = true;
+    for (let round = 1; round <= 2; round++) {
+      const sessions = await startMatch(ana, bo);
+      const ends = Promise.all([nextEvent(ana, 'end'), nextEvent(bo, 'end')]);
+      const matches = sessions.map((session) => new ToyMatch(session));
+      await playOut(matches, clock);
+      const [anaEnd, boEnd] = await ends;
+      expect(anaEnd).toEqual(boEnd);
+      expect(anaEnd).toEqual({ type: 'end', winner: matches[0]!.result, reason: 'finished' });
+      expect(matches.map((m) => m.rollbackStats)).not.toContain(null);
+      expect(matches[0]!.sim.hash()).toBe(matches[1]!.sim.hash());
+      expect(sessions.map((session) => session.desyncFrame)).toEqual([null, null]);
+    }
+    expect(s.services.metrics.matchesEnded.get({ reason: 'finished' })).toBe(2);
   });
 });
 

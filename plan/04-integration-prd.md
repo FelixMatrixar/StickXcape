@@ -71,14 +71,24 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 | join | Phone | room, nickname, clientVersion | Relay adds the player and replies with their player number and whether they host, or an error |
 | loadout | Phone | moves | Relay passes it to the other player |
 | arena | Host | arenaId | Relay passes it on |
-| ready | Phone | None | When both are ready, the relay sends start |
-| start | Relay | seed, inputDelay, startFrame | Both phones begin on the same frame |
+| ready | Phone | rollback (optional, launch) | When both are ready, the relay sends start |
+| start | Relay | seed, inputDelay, startFrame, fighters, arenaId, rollback | Both phones begin on the same frame |
 | input | Phone | frame, buttons | Relay passes it on immediately |
 | hash | Phone | frame, stateHash | Sent every 60 frames; a mismatch ends the match as a desync |
+| sync | Phone | lateness | Rollback matches only: relay passes it on; the phone running ahead slows down |
 | end | Phone | winner | Relay closes the match; stats go to the AI gateway separately |
 | ping and pong | Both | time | Measures round-trip time |
+| quickmatch | Phone | nickname | Launch, signed in: relay checks the nickname, answers queued, and pairs the phone with a stranger |
+| cancelmatch | Phone | None | Stops a quick match search |
+| leave | Phone | None | Leaves the room, keeping the connection |
+| queued | Relay | None | The phone is in the quick match queue |
+| matched | Relay | opponent (id, nickname) | Paired: sent after joined puts the phone in a new two-player room |
 
 **Buttons** are a 9-bit field: 4 bits for the stick direction, 5 for L, H, S, D and Block. **Input delay** is 3 frames (50 ms) when ping is under 80 ms and up to 6 frames above that, set once at start.
+
+**Quick match (launch, MP-7)** pairs signed-in players on a hidden skill rating and ping, starting within 100 points and 100 ms and widening each second. Its rooms hold two players and take only loadouts of moves the server has signed (`POST /account/moves/sign`). Finished matches move both players' ratings, and leaving one counts as a loss. Strangers see a nickname only after Muse Spark has checked it; otherwise it reads Challenger.
+
+**Rollback (launch, MP-6)** is used for a match only when both phones send `rollback: true` with ready; `start` then has `rollback: 8`. Input delay drops to 2 frames (33 ms), and grows only past about 260 ms between the phones, so a phone never rewinds more than 8 frames. A phone plays frames on a guess of the opponent's input and replays them when the real input differs. It sends a state hash only once that frame's inputs are final, and reports the winner only once the deciding frame is final.
 
 ### HTTP API
 
@@ -91,6 +101,27 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 | GET /version | None | Lowest supported clientVersion | None |
 
 All calls use HTTPS and reply in JSON. A version mismatch on join tells the phone to reload the web app.
+
+**Accounts and the cloud move library (launch, MP-9).** Signing in is optional: guests keep playing with the moves on their phone. Players sign up and sign in with a passkey (Face ID, a fingerprint or the phone's PIN), and the sign-in is an HttpOnly cookie, so these calls must come from the game's own origin.
+
+| Call | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| GET /account | None | account (or null), passkeys (whether this server and page can use them) | None |
+| POST /account/passkey/register/options | name (the nickname) | ceremony, WebAuthn creation options | 400: bad name; 429; 503: accounts off, or not on HTTPS with a domain |
+| POST /account/passkey/register | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony or refused passkey; 409: passkey already registered |
+| POST /account/passkey/login/options | None | ceremony, WebAuthn request options | 429; 503 |
+| POST /account/passkey/login | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony; 401: unknown or refused passkey |
+| POST /account/logout | None | account: null | None |
+| DELETE /account | None | Nothing (204); the account, its sign-ins and library are deleted | 401: not signed in |
+| POST /account/moves/sign | moves (1 to 16) | moves, each with a signature | 400: malformed, hash mismatch, or outside the move rules (says which move and why) |
+| GET /account/blocks | None | players (id, name, blockedAt) | 401 |
+| POST /account/blocks | player (account id) | Nothing (204); never matched again, either way round | 404: no such player |
+| DELETE /account/blocks/{id} | None | Nothing (204) | 404: not blocked |
+| POST /account/reports | player, reason (nickname, cheating, abuse or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
+| GET /account/library | None | moves (move, kind, description, quality, createdAt, updatedAt), loadout | 401 |
+| PUT /account/library/moves/{id} | move, kind (move or idle), description, quality, createdAt | updatedAt | 400: malformed or hash mismatch; 409: library full (200 moves) |
+| DELETE /account/library/moves/{id} | None | Nothing (204) | 404: not in the library |
+| PUT /account/library/loadout | loadout: place (such as light1) to move id | loadout | 400 |
 
 ## Shared code and environments
 

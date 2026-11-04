@@ -23,6 +23,11 @@ export const ERROR_CODES = [
   'input_ahead',
   'idle_timeout',
   'server_shutdown',
+  // Quick match (launch).
+  'not_signed_in',
+  'nickname_blocked',
+  'unsigned_move',
+  'quick_match_unavailable',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -65,6 +70,8 @@ export interface ArenaMessage {
 }
 export interface ReadyMessage {
   type: 'ready';
+  /** True when this phone can play with rollback netcode. The relay uses it only when both fighters can. */
+  rollback?: boolean;
 }
 /** Buttons for one frame. The relay passes it straight to the other fighter. */
 export interface InputMessage {
@@ -91,6 +98,36 @@ export interface PongMessage {
   type: 'pong';
   time: number;
 }
+/**
+ * Rollback matches only: how many frames late the opponent's inputs reach this phone, averaged
+ * over the last half second. The relay passes it to the opponent; comparing the two tells which
+ * phone runs ahead, and that phone slows down a little.
+ */
+export interface SyncMessage {
+  type: 'sync';
+  lateness: number;
+}
+
+/** A sync message's lateness is at most this many frames either way. */
+export const MAX_SYNC_LATENESS = 600;
+
+/**
+ * Quick match (launch, MP-7): look for a stranger of similar skill and ping. Needs a signed-in
+ * account (the relay reads the sign-in cookie when the socket opens) and no room. The relay
+ * answers queued, then joined and matched once it pairs two players in a new two-player room.
+ */
+export interface QuickMatchMessage {
+  type: 'quickmatch';
+  nickname: string;
+}
+/** Stops looking for a quick match. */
+export interface CancelMatchMessage {
+  type: 'cancelmatch';
+}
+/** Leaves the current room but keeps the connection, for another quick match or room. */
+export interface LeaveMessage {
+  type: 'leave';
+}
 
 export type ClientMessage =
   | JoinMessage
@@ -101,7 +138,11 @@ export type ClientMessage =
   | HashMessage
   | EndMessage
   | PingMessage
-  | PongMessage;
+  | PongMessage
+  | SyncMessage
+  | QuickMatchMessage
+  | CancelMatchMessage
+  | LeaveMessage;
 
 // Relay to phone.
 
@@ -128,6 +169,11 @@ export interface StartMessage {
   startFrame: number;
   fighters: [number, number];
   arenaId: string | null;
+  /**
+   * Frames a phone may play on a guess of the opponent's input before it must wait (rollback
+   * netcode). 0, or missing from an older relay, means input delay only: wait for every input.
+   */
+  rollback?: number;
 }
 export interface MatchEndMessage {
   type: 'end';
@@ -138,6 +184,19 @@ export interface ErrorMessage {
   type: 'error';
   code: ErrorCode;
   message: string;
+}
+/** In the quick match queue, looking for an opponent. */
+export interface QueuedMessage {
+  type: 'queued';
+}
+/**
+ * Paired with a stranger; sent right after joined puts this phone in the new room. `id` is the
+ * opponent's account id, for blocking or reporting them. Their nickname is shown only once Meta
+ * AI has checked it; otherwise it reads Challenger.
+ */
+export interface MatchedMessage {
+  type: 'matched';
+  opponent: { id: string; nickname: string };
 }
 
 export type ServerMessage =
@@ -151,6 +210,9 @@ export type ServerMessage =
   | MatchEndMessage
   | PingMessage
   | PongMessage
+  | SyncMessage
+  | QueuedMessage
+  | MatchedMessage
   | ErrorMessage;
 
 /**
@@ -191,7 +253,14 @@ export function parseClientMessage(data: string): ClientMessage | null {
     case 'arena':
       return isArenaId(m.arenaId) ? { type: 'arena', arenaId: m.arenaId } : null;
     case 'ready':
-      return { type: 'ready' };
+      return m.rollback === true ? { type: 'ready', rollback: true } : { type: 'ready' };
+    case 'sync':
+      return isNum(m.lateness, -MAX_SYNC_LATENESS, MAX_SYNC_LATENESS) ? { type: 'sync', lateness: m.lateness } : null;
+    case 'quickmatch':
+      return typeof m.nickname === 'string' && m.nickname.length <= 256 ? { type: 'quickmatch', nickname: m.nickname } : null;
+    case 'cancelmatch':
+    case 'leave':
+      return { type: m.type };
     case 'end':
       return m.winner === null || isInt(m.winner, 1, MAX_ROOM_PLAYERS) ? { type: 'end', winner: m.winner } : null;
     default:
@@ -199,7 +268,22 @@ export function parseClientMessage(data: string): ClientMessage | null {
   }
 }
 
-const SERVER_MESSAGE_TYPES = new Set<string>(['joined', 'room', 'loadout', 'arena', 'start', 'input', 'hash', 'end', 'ping', 'pong', 'error']);
+const SERVER_MESSAGE_TYPES = new Set<string>([
+  'joined',
+  'room',
+  'loadout',
+  'arena',
+  'start',
+  'input',
+  'hash',
+  'end',
+  'ping',
+  'pong',
+  'sync',
+  'queued',
+  'matched',
+  'error',
+]);
 
 /** Parses one message from the relay. The relay is trusted, so only the type is checked. */
 export function parseServerMessage(data: string): ServerMessage | null {

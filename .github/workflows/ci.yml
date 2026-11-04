@@ -39,6 +39,12 @@ jobs:
       - name: Bot matches on a slow network
         run: npm run bots -- --rooms 4 --latency 100 --jitter 20 --max-frames 900 --quiet
 
+      # Rollback netcode (MP-6) on a slower network: 200 ms more round trip. On Windows the bots
+      # played with 2 frames of input delay, rewound at most 7 frames and never waited; input delay
+      # on the same network needed 6 frames and waited 29% of the time.
+      - name: Rollback bot matches on a slower network
+        run: npm run bots -- --rooms 4 --latency 200 --jitter 20 --max-frames 900 --rollback --quiet
+
       - name: Server log
         if: always()
         run: cat server.log || true

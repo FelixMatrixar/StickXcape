@@ -4,10 +4,11 @@
 **/*.tsbuildinfo
 coverage
 
-# Secrets and local files
+# Secrets and local files, including the development account database
 **/.env
 **/.env.*
 !**/.env.example
+services/server/data
 .git
 .github
 .claude

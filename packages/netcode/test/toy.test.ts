@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Button, FRAME_MS, mirrorButtons, parseLoadout, verifyMoveHash, type MatchEndMessage } from '@sticxcape/shared';
 import { createFakeRelay } from '../src/fake-relay.ts';
-import type { LockstepSession } from '../src/lockstep.ts';
+import type { MatchSession } from '../src/session.ts';
 import { RelayClient } from '../src/relay-client.ts';
 import { ToyMatch, toyBotInput, toyLoadout } from '../src/toy-match.ts';
 import { ToySim } from '../src/toy-sim.ts';
@@ -88,7 +88,7 @@ describe('fake relay', () => {
       client.sendLoadout(toyLoadout());
       expect(await loadout).toEqual({ player: 2, moves: toyLoadout() });
 
-      const started = new Promise<LockstepSession>((resolve) => client.on('start', resolve));
+      const started = new Promise<MatchSession>((resolve) => client.on('start', resolve));
       client.ready();
       const session = await started;
       expect(session).toMatchObject({ seed: 5, inputDelay: 3, fighters: [1, 2], localSide: 0 });
@@ -105,6 +105,25 @@ describe('fake relay', () => {
       session.finish(1);
       expect(await ended).toEqual({ type: 'end', winner: 1, reason: 'finished' });
       expect(client.session).toBeNull();
+    } finally {
+      client.close();
+    }
+  });
+
+  it('finds Echo for a quick match at once, and leaves cleanly', async () => {
+    const client = new RelayClient(createFakeRelay({ seed: 5 }), { pingIntervalMs: 60_000 });
+    try {
+      const queued = new Promise((resolve) => client.on('queued', resolve));
+      const matched = new Promise((resolve) => client.on('matched', resolve));
+      client.quickMatch('Ana');
+      expect(client.searching).toBe(true);
+      await queued;
+      expect(await matched).toEqual({ id: 'echo-fake-relay0', nickname: 'Echo' });
+      expect(client).toMatchObject({ searching: false, player: 1, opponent: { nickname: 'Echo' } });
+      expect(client.room?.players.map((p) => p.nickname)).toEqual(['Ana', 'Echo']);
+
+      client.leave();
+      expect(client).toMatchObject({ player: null, room: null, opponent: null, searching: false });
     } finally {
       client.close();
     }

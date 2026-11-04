@@ -38,6 +38,7 @@
     body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
     main { max-width: 960px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
     h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 4px; }
     .muted { color: var(--muted); }
     .small { font-size: 13px; }
     header p { margin: 2px 0 14px; }
@@ -88,12 +89,13 @@
     </section>
 
     <section id="room" class="card" hidden>
-      <div class="invite"><span class="muted small">Invite</span><a id="link"></a><button id="share">Share</button></div>
+      <div class="invite" id="invite"><span class="muted small">Invite</span><a id="link"></a><button id="share">Share</button></div>
       <ul id="players"></ul>
       <p id="status" role="status"></p>
       <div class="row">
         <button id="ready" class="primary" disabled>Ready</button>
         <label class="check"><input type="checkbox" id="auto"> Let a bot play for me</label>
+        <label class="check"><input type="checkbox" id="rollback"> Rollback netcode (both phones tick it)</label>
       </div>
     </section>
 
@@ -107,12 +109,26 @@
     <dl class="stats">
       <div><dt>Ping to relay</dt><dd id="s-ping">–</dd></div>
       <div><dt>Input delay</dt><dd id="s-delay">–</dd></div>
+      <div><dt>Rollback</dt><dd id="s-rollback">–</dd></div>
       <div><dt>Frame</dt><dd id="s-frame">–</dd></div>
       <div><dt>Waiting for opponent</dt><dd id="s-wait">–</dd></div>
       <div><dt>State checks</dt><dd id="s-hash">–</dd></div>
       <div><dt>Result</dt><dd id="s-result">–</dd></div>
     </dl>
     <p class="muted small">Keys: ← → or A D to walk, ↑ W or Space to jump, J or Enter to jab. A backgrounded tab stops sending inputs, so the relay ends its match after 15 seconds.</p>
+
+    <section id="account" class="card">
+      <h2>Account <span class="muted small">(launch preview)</span></h2>
+      <p id="account-status" class="small" role="status">Checking…</p>
+      <div class="row">
+        <button id="account-create" hidden>Make a passkey</button>
+        <button id="account-signin" hidden>Sign in with a passkey</button>
+        <button id="account-quick" class="primary" hidden>Quick match a stranger</button>
+        <button id="account-cancel" hidden>Stop looking</button>
+        <button id="account-save" hidden>Save the toy move to my cloud library</button>
+        <button id="account-signout" hidden>Sign out</button>
+      </div>
+    </section>
   </main>
   <script type="module" src="./lab.js"></script>
 </body>

@@ -1,5 +1,5 @@
 import { CLIENT_VERSION, type ErrorCode, type MatchEndMessage, type MoveFile, type RoomInfo, type ServerMessage } from '@sticxcape/shared';
-import { LockstepSession } from './lockstep.ts';
+import { MatchSession } from './session.ts';
 import type { RelayTransport } from './transport.ts';
 
 /** An error the relay sent, such as room_not_found or version_mismatch (reload the page). */
@@ -19,26 +19,41 @@ export interface JoinResult {
   room: RoomInfo;
 }
 
+/** The stranger a quick match paired this phone with. `id` is for blocking or reporting them. */
+export interface QuickMatchOpponent {
+  id: string;
+  nickname: string;
+}
+
 export interface RelayClientEvents {
   room: RoomInfo;
   loadout: { player: number; moves: MoveFile[] };
   arena: string;
-  start: LockstepSession;
+  start: MatchSession;
   end: MatchEndMessage;
   error: RelayError;
   close: string;
+  /** In the quick match queue. */
+  queued: true;
+  /** Paired with a stranger, and already in the new room with them (see `room`). */
+  matched: QuickMatchOpponent;
 }
+
+/** Errors that end a quick match search. */
+const SEARCH_ERRORS = new Set<ErrorCode>(['not_signed_in', 'nickname_blocked', 'quick_match_unavailable', 'bad_nickname', 'already_joined']);
 
 export interface RelayClientOptions {
   pingIntervalMs?: number;
   now?: () => number;
+  /** Ask for rollback netcode when getting ready; see `rollback` below. Default false. */
+  rollback?: boolean;
 }
 
 const RTT_SAMPLES = 5;
 
 /**
  * The phone's side of a friend room: join, swap loadouts, pick the arena, get ready, and get a
- * LockstepSession for each match. It answers the relay's pings and measures its own round trip.
+ * MatchSession for each match. It answers the relay's pings and measures its own round trip.
  */
 export class RelayClient {
   readonly transport: RelayTransport;
@@ -48,8 +63,18 @@ export class RelayClient {
   /** The latest loadout received from each other player. */
   readonly loadouts = new Map<number, MoveFile[]>();
   /** The match in progress, if any. */
-  session: LockstepSession | null = null;
+  session: MatchSession | null = null;
   closed = false;
+  /** True from quickMatch() until paired, cancelled or refused. */
+  searching = false;
+  /** The quick match opponent while in a quick match room, otherwise null. */
+  opponent: QuickMatchOpponent | null = null;
+  /**
+   * True when this game can play with rollback netcode (it runs RollbackDriver, with save and
+   * load). It is sent with each ready; a match uses rollback only when both fighters ask for it,
+   * and its session's `rollback` says which one the relay picked.
+   */
+  rollback: boolean;
 
   private readonly now: () => number;
   private readonly listeners: { [E in keyof RelayClientEvents]?: ((value: RelayClientEvents[E]) => void)[] } = {};
@@ -60,6 +85,7 @@ export class RelayClient {
   constructor(transport: RelayTransport, options: RelayClientOptions = {}) {
     this.transport = transport;
     this.now = options.now ?? (() => performance.now());
+    this.rollback = options.rollback ?? false;
     transport.onMessage((message) => this.handle(message));
     transport.onClose((reason) => {
       this.closed = true;
@@ -108,7 +134,35 @@ export class RelayClient {
   }
 
   ready(): void {
-    this.transport.send({ type: 'ready' });
+    this.transport.send(this.rollback ? { type: 'ready', rollback: true } : { type: 'ready' });
+  }
+
+  /**
+   * Looks for a stranger of similar skill (launch, MP-7). Needs the page signed in (the socket
+   * carries the sign-in cookie) and no room. Listen for `queued`, then `matched`; the relay puts
+   * both phones in a new two-player room, where you send a loadout of signed moves
+   * (AccountClient.signMoves) and get ready as usual. Refusals arrive as `error`.
+   */
+  quickMatch(nickname: string): void {
+    this.searching = true;
+    this.transport.send({ type: 'quickmatch', nickname });
+  }
+
+  cancelQuickMatch(): void {
+    this.searching = false;
+    this.transport.send({ type: 'cancelmatch' });
+  }
+
+  /** Leaves the room (or the quick match queue) and keeps the connection, ready to join or search again. */
+  leave(): void {
+    this.transport.send({ type: 'leave' });
+    this.player = null;
+    this.host = false;
+    this.room = null;
+    this.loadouts.clear();
+    this.session = null;
+    this.searching = false;
+    this.opponent = null;
   }
 
   close(): void {
@@ -139,17 +193,24 @@ export class RelayClient {
         return this.emit('arena', message.arenaId);
       case 'start': {
         if (this.player === null) return;
-        const session = new LockstepSession({ localPlayer: this.player, start: message, send: (m) => this.transport.send(m), now: this.now });
+        const session = new MatchSession({ localPlayer: this.player, start: message, send: (m) => this.transport.send(m), now: this.now });
         this.session = session;
         return this.emit('start', session);
       }
       case 'input':
       case 'hash':
+      case 'sync':
         return this.session?.receive(message);
       case 'end':
         this.session?.receive(message);
         this.session = null;
         return this.emit('end', message);
+      case 'queued':
+        return this.emit('queued', true);
+      case 'matched':
+        this.searching = false;
+        this.opponent = message.opponent;
+        return this.emit('matched', message.opponent);
       case 'ping':
         return this.transport.send({ type: 'pong', time: message.time });
       case 'pong': {
@@ -162,6 +223,7 @@ export class RelayClient {
       }
       case 'error': {
         const error = new RelayError(message.code, message.message);
+        if (this.searching && SEARCH_ERRORS.has(message.code)) this.searching = false;
         if (this.pendingJoin) {
           this.pendingJoin.reject(error);
           this.pendingJoin = null;

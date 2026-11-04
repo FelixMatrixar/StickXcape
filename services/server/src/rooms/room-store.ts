@@ -6,7 +6,10 @@ export interface RoomMember {
   nickname: string;
 }
 
-/** A friend room: who is in it, who hosts and which arena the host picked. Lives in memory only. */
+/**
+ * A room: who is in it, who hosts and which arena the host picked. Lives in memory only. A friend
+ * room holds up to 8 by invite link; a quick match room holds the two strangers the relay paired.
+ */
 export class Room {
   readonly code: string;
   readonly createdBy: string;
@@ -16,6 +19,9 @@ export class Room {
   inMatch = false;
   /** When the room last became empty (a new room starts empty); null while anyone is in it. */
   emptySince: number | null;
+  /** A quick match room: two players, signed loadouts only, and rated results. */
+  quick = false;
+  maxPlayers = MAX_ROOM_PLAYERS;
 
   constructor(code: string, createdBy: string, now: number) {
     this.code = code;
@@ -24,7 +30,7 @@ export class Room {
   }
 
   get isFull(): boolean {
-    return this.members.size >= MAX_ROOM_PLAYERS;
+    return this.members.size >= this.maxPlayers;
   }
 
   /** Adds a player with the lowest free number; the first one in hosts. Null when the room is full. */

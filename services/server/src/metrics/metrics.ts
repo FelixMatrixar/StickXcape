@@ -3,7 +3,7 @@ import type { EndReason } from '@sticxcape/shared';
 import { RollingSamples } from '../lib/limits.ts';
 import { Registry } from './registry.ts';
 
-export type AiCall = 'move_name' | 'match_tips';
+export type AiCall = 'move_name' | 'match_tips' | 'nickname_check';
 
 /** Outcomes of an AI gateway request. `error_*` outcomes count toward the AI error alert. */
 export type AiOutcome =
@@ -38,7 +38,7 @@ export function createMetrics() {
   return {
     registry,
     roomsCreated: registry.counter('sticxcape_rooms_created_total', 'Rooms created'),
-    matchesStarted: registry.counter('sticxcape_matches_started_total', 'Matches started'),
+    matchesStarted: registry.counter<'netcode'>('sticxcape_matches_started_total', 'Matches started, by netcode (delay or rollback)', ['netcode']),
     matchesEnded: registry.counter<'reason'>('sticxcape_matches_ended_total', 'Matches ended, by reason (finished, desync, disconnect, room_closed)', [
       'reason',
     ]),
@@ -49,6 +49,12 @@ export function createMetrics() {
     relayForward: registry.histogram('sticxcape_relay_forward_seconds', 'Time the relay holds an input before passing it on (sampled)', [
       0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
     ]),
+    accountsCreated: registry.counter('sticxcape_accounts_created_total', 'Accounts made with a passkey'),
+    quickMatches: registry.counter<'outcome'>('sticxcape_quick_matches_total', 'Quick match pairings and finished quick matches, by outcome (paired, rated)', ['outcome']),
+    passkeyChecks: registry.counter<'ceremony' | 'outcome'>('sticxcape_passkey_checks_total', 'Passkey sign-ups and sign-ins, by ceremony (register, login) and outcome (ok, rejected)', [
+      'ceremony',
+      'outcome',
+    ]),
     aiRequests: registry.counter<'call' | 'outcome'>('sticxcape_ai_requests_total', 'AI gateway requests, by call and outcome', ['call', 'outcome']),
     aiLatency: registry.histogram<'call'>('sticxcape_ai_response_seconds', "Meta Model API response time, successes and failures", [
       0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 7.5,
@@ -57,7 +63,7 @@ export function createMetrics() {
     samples: {
       rttMs: new RollingSamples(1000),
       forwardMs: new RollingSamples(1000),
-      aiMs: { move_name: new RollingSamples(500), match_tips: new RollingSamples(500) } satisfies Record<AiCall, RollingSamples>,
+      aiMs: { move_name: new RollingSamples(500), match_tips: new RollingSamples(500), nickname_check: new RollingSamples(500) } satisfies Record<AiCall, RollingSamples>,
     },
     close(): void {
       clearInterval(loopReset);

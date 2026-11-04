@@ -4,6 +4,9 @@ dist/
 *.tsbuildinfo
 coverage/
 
+# Local account database (development)
+services/server/data/
+
 # Local secrets: never commit these
 .env
 .env.*

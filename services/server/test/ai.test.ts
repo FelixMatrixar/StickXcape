@@ -98,7 +98,7 @@ describe('with Meta AI', () => {
     expect((call!.init.headers as Record<string, string>).authorization).toBe('Bearer test-key');
     const { body } = call!;
     expect(body).toMatchObject({
-      model: 'muse-spark-1.3',
+      model: 'muse-spark-1.1',
       reasoning_effort: 'minimal',
       max_completion_tokens: 1024,
       prompt_cache_key: 'sticxcape-move-name-v1',

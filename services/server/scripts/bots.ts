@@ -5,6 +5,7 @@
  *   npm run bots                                    one match against http://localhost:8080
  *   npm run bots -- --rooms 10 --matches 5          the week 3 check: 50 matches, no desync or relay error
  *   npm run bots -- --latency 100 --jitter 20       a bad network: 100 ms more round trip between the phones
+ *   npm run bots -- --latency 200 --rollback        rollback netcode instead of input delay (MP-6)
  *   npm run bots -- --rooms 200 --matches 2         load: start the server with MAX_CONNECTIONS_PER_IP=1000
  *                                                   and ROOMS_PER_IP_PER_10_MIN=1000 first
  *   npm run bots -- --url https://staging.example --admin-token ...
@@ -22,6 +23,7 @@ const HELP = `Usage: npm run bots -- [options]
   --latency <ms>        Round trip added between the two phones (default 0)
   --jitter <ms>         The delay between the phones varies by up to this much either way (default 0)
   --max-frames <n>      Frames before a match goes to whoever leads (default 3600, 60 s)
+  --rollback            Play with rollback netcode: 2 frames of input delay, up to 8 frames corrected
   --max-stall <pct>     Fail when bots wait for each other more than this share of the time (default 5)
   --admin-token <t>     ADMIN_TOKEN of the server, to print its own relay stats
   --quiet               Only print the summary
@@ -35,6 +37,7 @@ const { values } = parseArgs({
     latency: { type: 'string', default: '0' },
     jitter: { type: 'string', default: '0' },
     'max-frames': { type: 'string', default: '3600' },
+    rollback: { type: 'boolean', default: false },
     'max-stall': { type: 'string', default: '5' },
     'admin-token': { type: 'string' },
     quiet: { type: 'boolean', default: false },
@@ -64,12 +67,14 @@ const options = {
   latencyMs: number('latency', values.latency, 0),
   jitterMs: number('jitter', values.jitter, 0),
   maxFrames: Math.floor(number('max-frames', values['max-frames'], 60)),
+  rollback: values.rollback,
 };
 const maxStall = number('max-stall', values['max-stall'], 0) / 100;
 
 const simulated = options.latencyMs > 0 || options.jitterMs > 0;
 const network = simulated ? `, +${options.latencyMs} ms round trip ±${options.jitterMs} ms jitter` : '';
-console.log(`SticXcape bot matches against ${url}: ${options.rooms} room(s) × ${options.matches} match(es)${network}`);
+const netcode = options.rollback ? ', rollback netcode' : '';
+console.log(`SticXcape bot matches against ${url}: ${options.rooms} room(s) × ${options.matches} match(es)${network}${netcode}`);
 if (simulated && process.platform === 'win32') {
   console.log('Note: timers on Windows tick about every 15.6 ms, so each added delay comes out up to 15 ms longer.');
   console.log('      Check the measured round trip below, or run bad-network checks on Linux (as CI does) for exact delays.');
@@ -79,7 +84,10 @@ const report = await runBotMatches({ ...options, log: values.quiet ? undefined :
 printReport(report);
 await printServerStats();
 
-const failed = report.errors.length > 0 || report.matches < options.rooms * options.matches || report.stallShare > maxStall;
+// Asking for rollback and getting input delay means the server is older than these bots.
+const noRollback = options.rollback && report.rollbackMatches < report.matches;
+if (noRollback) console.log(`\nAsked for rollback, but the relay started ${report.matches - report.rollbackMatches} match(es) with input delay only.`);
+const failed = report.errors.length > 0 || report.matches < options.rooms * options.matches || report.stallShare > maxStall || noRollback;
 console.log(failed ? 'FAIL' : 'PASS');
 process.exit(failed ? 1 : 0);
 
@@ -90,6 +98,11 @@ function printReport(r: BotMatchReport): void {
   for (const delay of r.inputDelays) delays.set(delay, (delays.get(delay) ?? 0) + 1);
   const delayText = [...delays].sort(([a], [b]) => a - b).map(([frames, count]) => `${frames} frames × ${count}`).join(', ');
   console.log(`Input delay picked by the relay: ${delayText || 'none'}`);
+  if (r.rollback.frames > 0) {
+    const { frames, rollbacks, replayedFrames, deepest } = r.rollback;
+    const replayed = ((replayedFrames / frames) * 100).toFixed(1);
+    console.log(`Rollback: ${rollbacks} rewinds in ${frames} frames, deepest ${deepest} frames; ${replayedFrames} frames replayed (${replayed}% extra simulation)`);
+  }
   console.log(`Waiting for the other phone: ${(r.stallShare * 100).toFixed(1)}% of match time (limit ${(maxStall * 100).toFixed(1)}%)`);
   if (r.rttMs.length > 0) console.log(`Round trip to the relay: p50 ${Math.round(percentile(r.rttMs, 50))} ms, p95 ${Math.round(percentile(r.rttMs, 95))} ms`);
   if (r.errors.length > 0) {

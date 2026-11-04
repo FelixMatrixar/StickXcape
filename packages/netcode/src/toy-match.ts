@@ -1,7 +1,8 @@
 import { Button, encodeFrames, FRAME_VALUES, MOVE_FORMAT_VERSION, Rng, toFixed, type MoveFile } from '@sticxcape/shared';
 import { LockstepDriver } from './driver.ts';
-import type { LockstepSession } from './lockstep.ts';
-import { ToySim } from './toy-sim.ts';
+import { RollbackDriver, type RollbackStats } from './rollback-driver.ts';
+import type { MatchSession } from './session.ts';
+import { ToySim, type ToySnapshot } from './toy-sim.ts';
 
 const TOY_JAB_FRAMES = 12;
 
@@ -66,30 +67,51 @@ export interface ToyMatchOptions {
   stateHash?: (sim: ToySim) => number;
 }
 
+/** Everything a rollback rewinds in a toy match: the fight, and the result if it was decided. */
+interface ToyMatchSave {
+  sim: ToySnapshot;
+  result: number | null | undefined;
+  decidedAt: number | null;
+}
+
 /**
- * One phone's side of a toy match: a ToySim run by a LockstepDriver, which reports the winner
- * once a fighter is out of health or time runs out. The lab, the bot script and the tests use it.
+ * One phone's side of a toy match: a ToySim run by a LockstepDriver, or a RollbackDriver in a
+ * rollback match, which reports the winner once a fighter is out of health or time runs out.
+ * The lab, the bot script and the tests use it, and it shows the fight screen how to use rollback.
  */
 export class ToyMatch {
-  readonly session: LockstepSession;
+  readonly session: MatchSession;
   readonly sim: ToySim;
   /** The winner this phone worked out (null for a draw), or undefined while the fight goes on. */
   result: number | null | undefined = undefined;
-  private readonly driver: LockstepDriver;
+  private readonly driver: LockstepDriver | RollbackDriver<ToyMatchSave>;
   private readonly maxFrames: number;
+  /** The frame the fight was decided on. */
+  private decidedAt: number | null = null;
   private reported = false;
 
-  constructor(session: LockstepSession, options: ToyMatchOptions = {}) {
+  constructor(session: MatchSession, options: ToyMatchOptions = {}) {
     this.session = session;
     this.sim = new ToySim(session.seed);
     this.maxFrames = options.maxFrames ?? 3600;
     const input = options.input ?? toyBotInput(session.seed ^ session.localPlayer);
     const stateHash = options.stateHash ?? ((sim: ToySim) => sim.hash());
-    this.driver = new LockstepDriver(session, {
-      sampleInput: () => input(this.sim, session.localSide),
-      simulate: (inputs) => this.simulate(inputs),
-      stateHash: () => stateHash(this.sim),
-    });
+    const sampleInput = () => input(this.sim, session.localSide);
+    const simulate = (inputs: [number, number], frame: number) => this.simulate(inputs, frame);
+    this.driver =
+      session.rollback > 0
+        ? new RollbackDriver<ToyMatchSave>(session, {
+            sampleInput,
+            simulate,
+            save: () => ({ sim: this.sim.save(), result: this.result, decidedAt: this.decidedAt }),
+            load: (save) => {
+              this.sim.load(save.sim);
+              this.result = save.result;
+              this.decidedAt = save.decidedAt;
+            },
+            stateHash: () => stateHash(this.sim),
+          })
+        : new LockstepDriver(session, { sampleInput, simulate, stateHash: () => stateHash(this.sim) });
   }
 
   /** True while the last update was waiting for the opponent's input. */
@@ -97,10 +119,17 @@ export class ToyMatch {
     return this.driver.stalled;
   }
 
+  /** Rewinds and replays so far in a rollback match, or null in an input-delay match. */
+  get rollbackStats(): RollbackStats | null {
+    return this.driver instanceof RollbackDriver ? this.driver.stats : null;
+  }
+
   /** Call once per animation frame (or timer tick) with a timestamp in ms. Returns frames simulated. */
   update(nowMs: number): number {
     const steps = this.driver.update(nowMs);
-    if (this.result !== undefined && !this.reported) {
+    // With rollback the fight can be decided on a guess that a late input then undoes, so the
+    // result goes to the relay only once the deciding frame is final. Input delay is always final.
+    if (this.result !== undefined && !this.reported && this.decidedAt !== null && this.decidedAt <= this.session.confirmedFrame) {
       this.reported = true;
       this.session.finish(this.result);
     }
@@ -111,12 +140,13 @@ export class ToyMatch {
    * The fight freezes on the frame it is decided, so both phones work out the result on the same
    * frame however their updates batch the steps, and their hashes keep matching until the relay ends it.
    */
-  private simulate(inputs: [number, number]): void {
+  private simulate(inputs: [number, number], frame: number): void {
     if (this.result !== undefined) return;
     this.sim.step(inputs);
     if (this.sim.over || this.sim.frame >= this.maxFrames) {
       const leader = this.sim.leader();
       this.result = leader === null ? null : this.session.fighters[leader];
+      this.decidedAt = frame;
     }
   }
 }

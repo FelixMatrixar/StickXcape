@@ -41,6 +41,19 @@ export function decodeBase64(text: string): Uint8Array | null {
   return out;
 }
 
+/** Base64url without padding, as WebAuthn uses for ids, challenges and binary fields in JSON. */
+export function encodeBase64Url(bytes: Uint8Array): string {
+  return encodeBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Decodes base64url, with or without padding; returns null for anything else. */
+export function decodeBase64Url(text: string): Uint8Array | null {
+  if (/[+/=]/.test(text.replace(/=+$/, ''))) return null;
+  const standard = text.replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (standard.length % 4 === 1) return null;
+  return decodeBase64(standard + '='.repeat((4 - (standard.length % 4)) % 4));
+}
+
 function sextet(text: string, index: number): number {
   const code = text.charCodeAt(index);
   return code < 128 ? LOOKUP[code]! : -1;

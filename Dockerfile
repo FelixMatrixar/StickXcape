@@ -37,6 +37,9 @@ COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/services/server/dist services/server/dist
 COPY services/server/public services/server/public
 COPY --from=build /app/apps/client/dist apps/client/dist
+# Accounts live in a SQLite file under /data when DATABASE_FILE points there (a volume on Fly.io,
+# which mounts it for the image's user). Owned by node, so a local `docker run -v` volume works too.
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8080
 CMD ["node", "services/server/dist/index.js"]

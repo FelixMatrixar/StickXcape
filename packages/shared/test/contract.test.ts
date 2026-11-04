@@ -11,6 +11,15 @@ import {
   isHashFrame,
   isRoomCode,
   KEYFRAME_MAX_CHARS,
+  decodeBase64Url,
+  encodeBase64Url,
+  parseAccountName,
+  parseCloudMove,
+  parseLoadoutSelection,
+  parsePasskeyAssertion,
+  parsePasskeyRegistration,
+  MAX_ROLLBACK_FRAMES,
+  moveRuleProblem,
   mirrorButtons,
   MOVE_FORMAT_VERSION,
   packButtons,
@@ -18,6 +27,8 @@ import {
   parseMatchTipsRequest,
   parseMoveNameRequest,
   parseServerMessage,
+  rollbackInputDelayForPing,
+  ROLLBACK_INPUT_DELAY,
   roomCodeFromPath,
   roomLink,
   unpackButtons,
@@ -70,6 +81,18 @@ describe('input delay rule', () => {
   it('assumes the worst for a ping it cannot read', () => {
     expect(inputDelayForPing(Number.NaN)).toBe(6);
     expect(inputDelayForPing(-5)).toBe(6);
+    expect(rollbackInputDelayForPing(Number.NaN)).toBe(6);
+  });
+
+  it('keeps rollback matches at 2 frames until a phone would rewind more than 8', () => {
+    expect([ROLLBACK_INPUT_DELAY, MAX_ROLLBACK_FRAMES]).toEqual([2, 8]);
+    expect(rollbackInputDelayForPing(0)).toBe(2);
+    expect(rollbackInputDelayForPing(100)).toBe(2);
+    // The opponent's inputs arrive 8 frames late (one way, plus 2 for jitter) at about 260 ms.
+    expect(rollbackInputDelayForPing(266)).toBe(2);
+    expect(rollbackInputDelayForPing(300)).toBe(3);
+    expect(rollbackInputDelayForPing(400)).toBe(6);
+    expect(rollbackInputDelayForPing(1000)).toBe(6);
   });
 
   it('hashes every 60 frames from frame 0', () => {
@@ -156,6 +179,15 @@ describe('parseClientMessage', () => {
 
   it('checks the lobby messages', async () => {
     expect(parse({ type: 'ready', anything: 1 })).toEqual({ type: 'ready' });
+    expect(parse({ type: 'ready', rollback: true })).toEqual({ type: 'ready', rollback: true });
+    expect(parse({ type: 'ready', rollback: 'yes' })).toEqual({ type: 'ready' });
+    expect(parse({ type: 'sync', lateness: -2.5 })).toEqual({ type: 'sync', lateness: -2.5 });
+    expect(parse({ type: 'sync', lateness: 601 })).toBeNull();
+    expect(parse({ type: 'sync', lateness: '1' })).toBeNull();
+    expect(parse({ type: 'quickmatch', nickname: 'Ana' })).toEqual({ type: 'quickmatch', nickname: 'Ana' });
+    expect(parse({ type: 'quickmatch' })).toBeNull();
+    expect(parse({ type: 'cancelmatch', extra: 1 })).toEqual({ type: 'cancelmatch' });
+    expect(parse({ type: 'leave' })).toEqual({ type: 'leave' });
     expect(parse({ type: 'arena', arenaId: 'rooftop-2' })).toEqual({ type: 'arena', arenaId: 'rooftop-2' });
     expect(parse({ type: 'arena', arenaId: 'Rooftop' })).toBeNull();
     expect(parse({ type: 'end', winner: null })).toEqual({ type: 'end', winner: null });
@@ -171,9 +203,82 @@ describe('parseClientMessage', () => {
   });
 });
 
+describe('move rules for signing', () => {
+  /** A still move of `frames` frames, standing, with a change applied to its values. */
+  function moveWith(frames: number, change: (values: Int16Array) => void = () => {}) {
+    const values = new Int16Array(frames * FRAME_VALUES);
+    for (let f = 0; f < frames; f++) values[f * FRAME_VALUES + 1] = 950;
+    change(values);
+    return withHash({
+      id: '7a1c0de0-0000-4000-8000-000000000001',
+      version: MOVE_FORMAT_VERSION,
+      slot: 'light',
+      name: 'Test',
+      frames: encodeFrames(values),
+      active: [0, frames - 1],
+      limb: 'rightWrist',
+      height: 'mid',
+    });
+  }
+
+  it('passes ordinary moves, including a half-turn spin spread over frames and a wrap past half a turn', async () => {
+    expect(moveRuleProblem(await moveWith(10))).toBeNull();
+    expect(moveRuleProblem(await moveWith(10, (v) => v.forEach((_, i) => i % FRAME_VALUES === 2 && (v[i] = ((i / FRAME_VALUES) * 3600) | 0))))).toBeNull();
+    // 179° to -179° is a 2° turn the short way round.
+    expect(moveRuleProblem(await moveWith(2, (v) => ((v[4] = 32_600), (v[FRAME_VALUES + 4] = -32_600))))).toBeNull();
+  });
+
+  it('refuses teleports, limbs that spin round in a frame, and bodies far from the floor', async () => {
+    expect(moveRuleProblem(await moveWith(3, (v) => (v[2 * FRAME_VALUES] = 800)))).toMatch(/frame 2.*45 m\/s/);
+    expect(moveRuleProblem(await moveWith(3, (v) => (v[FRAME_VALUES + 2 + 7] = 22_000)))).toMatch(/frame 1: the rightElbow/);
+    expect(moveRuleProblem(await moveWith(3, (v) => v.forEach((_, i) => i % FRAME_VALUES === 1 && (v[i] = 3100))))).toMatch(/floor/);
+    expect(moveRuleProblem(await moveWith(3, (v) => v.forEach((_, i) => i % FRAME_VALUES === 0 && (v[i] = -6500))))).toMatch(/6 m/);
+  });
+});
+
+describe('accounts and the cloud library', () => {
+  it('encodes base64url without padding and decodes it strictly', () => {
+    expect(encodeBase64Url(new Uint8Array([0xfb, 0xff]))).toBe('-_8');
+    expect(encodeBase64Url(new Uint8Array([]))).toBe('');
+    expect(decodeBase64Url('-_8')).toEqual(new Uint8Array([0xfb, 0xff]));
+    expect(decodeBase64Url('-_8=')).toEqual(new Uint8Array([0xfb, 0xff]));
+    for (const bad of ['+/8', 'A', 'AB=C', 'A*B']) expect(decodeBase64Url(bad), bad).toBeNull();
+    const all = new Uint8Array(256).map((_, i) => i);
+    expect(decodeBase64Url(encodeBase64Url(all))).toEqual(all);
+  });
+
+  it('checks account names, cloud moves and loadouts', async () => {
+    expect(parseAccountName('  Ana  ')).toBe('Ana');
+    expect(parseAccountName('')).toBeNull();
+    const move = await sampleMove();
+    const input = { move, kind: 'idle', description: '  A  stance ', quality: 0.5, createdAt: 1 };
+    expect(parseCloudMove(input)).toEqual({ ...input, description: 'A stance' });
+    expect(parseCloudMove({ move, createdAt: 1 })).toEqual({ move, kind: 'move', description: null, quality: null, createdAt: 1 });
+    for (const bad of [{ ...input, kind: 'taunt' }, { ...input, quality: -0.1 }, { ...input, createdAt: '1' }, { ...input, move: { ...move, slot: 'kick' } }]) {
+      expect(parseCloudMove(bad)).toBeNull();
+    }
+    const id = '7a1c0de0-0000-4000-8000-000000000001';
+    expect(parseLoadoutSelection({ light1: id, victory: id })).toEqual({ light1: id, victory: id });
+    expect(parseLoadoutSelection({ Light: id })).toBeNull();
+    expect(parseLoadoutSelection(Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p${i}`, id])))).toBeNull();
+    expect(parseLoadoutSelection([id])).toBeNull();
+  });
+
+  it('shape-checks passkey answers', () => {
+    const registration = { id: 'abc', type: 'public-key', response: { clientDataJSON: 'e30', attestationObject: 'oA', transports: ['internal'] } };
+    expect(parsePasskeyRegistration(registration)).toEqual(registration);
+    expect(parsePasskeyRegistration({ ...registration, type: 'password' })).toBeNull();
+    expect(parsePasskeyRegistration({ ...registration, response: { ...registration.response, transports: [1] } })).toBeNull();
+    const assertion = { id: 'abc', type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'AA', signature: 'AA' } };
+    expect(parsePasskeyAssertion(assertion)).toEqual({ ...assertion, response: { ...assertion.response, userHandle: null } });
+    expect(parsePasskeyAssertion({ ...assertion, response: { ...assertion.response, signature: 1 } })).toBeNull();
+  });
+});
+
 describe('parseServerMessage', () => {
   it('checks only the type', () => {
     expect(parseServerMessage('{"type":"joined","player":1}')).toEqual({ type: 'joined', player: 1 });
+    expect(parseServerMessage('{"type":"sync","lateness":1.5}')).toEqual({ type: 'sync', lateness: 1.5 });
     expect(parseServerMessage('{"type":"join"}')).toBeNull();
     expect(parseServerMessage('nope')).toBeNull();
   });

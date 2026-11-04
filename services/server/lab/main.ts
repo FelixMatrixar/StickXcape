@@ -1,20 +1,23 @@
 /**
  * The relay lab: a toy match between two phones through the real relay, for the week 2 check
- * before the fight engine exists. It uses the game's own netcode (RelayClient, LockstepSession,
- * LockstepDriver) with ToySim standing in for the fight.
+ * before the fight engine exists. It uses the game's own netcode (RelayClient, MatchSession, and
+ * LockstepDriver or RollbackDriver) with ToySim standing in for the fight.
  */
 import {
+  AccountClient,
+  ApiRequestError,
   connectWebSocket,
+  passkeysSupported,
   RelayClient,
   RelayError,
   ServicesClient,
   ToyMatch,
   toyBotInput,
   toyLoadout,
-  type LockstepSession,
+  type MatchSession,
   type ToySim,
 } from '@sticxcape/netcode';
-import { Button, FRAME_MS, fromFixed, isRoomCode, type ButtonName, type MatchEndMessage, type RoomInfo } from '@sticxcape/shared';
+import { Button, FRAME_MS, fromFixed, isRoomCode, type ButtonName, type MatchEndMessage, type MoveFile, type RoomInfo } from '@sticxcape/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -23,10 +26,12 @@ const nicknameInput = $<HTMLInputElement>('nickname');
 const enterButton = $<HTMLButtonElement>('enter');
 const readyButton = $<HTMLButtonElement>('ready');
 const autoInput = $<HTMLInputElement>('auto');
+const rollbackInput = $<HTMLInputElement>('rollback');
 const canvas = $<HTMLCanvasElement>('stage');
 const ctx = canvas.getContext('2d')!;
 
 const NICKNAME_KEY = 'sticxcape.nickname';
+const ROLLBACK_KEY = 'sticxcape.lab.rollback';
 
 function load(key: string): string | null {
   try {
@@ -46,6 +51,8 @@ function save(key: string, value: string): void {
 
 nicknameInput.value = load(NICKNAME_KEY) || `Player ${10 + Math.floor(Math.random() * 90)}`;
 nicknameInput.addEventListener('change', () => save(NICKNAME_KEY, nicknameInput.value.trim()));
+rollbackInput.checked = load(ROLLBACK_KEY) === '1';
+rollbackInput.addEventListener('change', () => save(ROLLBACK_KEY, rollbackInput.checked ? '1' : '0'));
 
 // Home: create a room, or join the one in the link.
 
@@ -82,12 +89,15 @@ let room: RoomInfo | null = null;
 let current: CurrentMatch | null = null;
 let readyPressed = false;
 
-async function enterRoom(code: string): Promise<void> {
+/** A relay connection wired to the room view. Before a room exists, errors show in the account panel. */
+async function connectRelay(): Promise<RelayClient> {
   const relay = new RelayClient(await connectWebSocket(services.relayUrl));
   relay.on('room', (info) => {
     room = info;
     if (!info.fighters && !info.players.some((p) => p.player === relay.player && p.ready)) readyPressed = false;
     renderRoom();
+    // A quick match opponent leaving brings the Quick match button back.
+    if (relay.opponent) showAccountButtons(true);
   });
   relay.on('start', startMatch);
   relay.on('end', (end) => {
@@ -98,10 +108,15 @@ async function enterRoom(code: string): Promise<void> {
   let lastError = '';
   relay.on('error', (error) => {
     lastError = error.code === 'version_mismatch' ? 'This page is out of date; reload it.' : error.message;
-    setStatus(lastError, true);
+    if (client === relay) setStatus(lastError, true);
+    else $('account-status').textContent = lastError;
   });
   relay.on('close', () => setStatus(`${lastError ? `${lastError}. ` : ''}Disconnected from the relay; reload to rejoin.`, true));
+  return relay;
+}
 
+async function enterRoom(code: string): Promise<void> {
+  const relay = await connectRelay();
   try {
     const joined = await relay.join(code, nicknameInput.value);
     client = relay;
@@ -128,6 +143,44 @@ async function enterRoom(code: string): Promise<void> {
   renderRoom();
 }
 
+/**
+ * Quick match (launch): sign the toy loadout, then look for a stranger. Needs this page signed
+ * in, since the relay reads the sign-in cookie. Once matched it plays like any room.
+ */
+let searcher: RelayClient | null = null;
+let signedLoadout: MoveFile[] = [];
+
+async function startQuickMatch(): Promise<void> {
+  signedLoadout = await accounts.signMoves(toyLoadout());
+  // Left alone after a quick match: leave that room and search again on the same connection.
+  if (client && client === searcher) {
+    client.leave();
+    client = null;
+    room = null;
+    current = null;
+    $('room').hidden = true;
+  }
+  if (!searcher) {
+    const relay = await connectRelay();
+    relay.on('queued', () => ($('account-status').textContent = 'Looking for an opponent of your level…'));
+    relay.on('matched', (opponent) => {
+      client = relay;
+      room = relay.room;
+      relay.sendLoadout(signedLoadout);
+      $('home').hidden = true;
+      $('room').hidden = false;
+      $<HTMLElement>('invite').hidden = true;
+      $('account-status').textContent = `Matched with ${opponent.nickname}.`;
+      showAccountButtons(true);
+      renderRoom();
+    });
+    relay.on('error', () => showAccountButtons(true));
+    searcher = relay;
+  }
+  searcher.quickMatch(nicknameInput.value);
+  showAccountButtons(true);
+}
+
 async function shareLink(link: string): Promise<void> {
   if (navigator.share) {
     await navigator.share({ title: 'SticXcape relay lab', url: link }).catch(() => {});
@@ -144,6 +197,8 @@ async function shareLink(link: string): Promise<void> {
 readyButton.addEventListener('click', () => {
   if (!client) return;
   readyPressed = true;
+  // The relay uses rollback only when both fighters ask; the Rollback stat shows what it picked.
+  client.rollback = rollbackInput.checked;
   client.ready();
   renderRoom();
 });
@@ -183,6 +238,7 @@ function renderRoom(): void {
   readyButton.textContent = rematch ? 'Rematch' : 'Ready';
 
   if (room.fighters) setStatus(`${nameOf(room.fighters[0])} vs ${nameOf(room.fighters[1])}`);
+  else if (room.players.length < 2 && client.opponent) setStatus('Your opponent left. Tap Quick match to find another.');
   else if (room.players.length < 2) setStatus('Waiting for someone to open the invite link…');
   else if (!myTurn) setStatus(`${nameOf(next[0]!)} and ${nameOf(next[1]!)} fight next; you are in the queue.`);
   else if (readyPressed) setStatus(`Waiting for ${nameOf(next.find((p) => p !== me)!)} to tap Ready…`);
@@ -197,7 +253,7 @@ function setStatus(text: string, bad = false): void {
 
 // The match.
 
-function startMatch(session: LockstepSession): void {
+function startMatch(session: MatchSession): void {
   const bot = toyBotInput(session.seed ^ session.localPlayer);
   const state: CurrentMatch = {
     match: new ToyMatch(session, { input: (sim, side) => (autoInput.checked ? bot(sim, side) : heldButtons()) }),
@@ -414,15 +470,100 @@ function updateStats(now: number): void {
   const { match, startedAt, stalledMs, desyncFrame, end } = current;
   const delay = match.session.inputDelay;
   setStat('s-delay', `${delay} frames (${Math.round(delay * FRAME_MS)} ms)`);
+  const rollback = match.rollbackStats;
+  setStat('s-rollback', rollback ? `${rollback.rollbacks} rewinds, deepest ${rollback.deepest} frames` : 'Off');
   setStat('s-frame', String(match.sim.frame));
   const elapsed = startedAt === null ? 0 : now - startedAt;
   setStat('s-wait', elapsed > 0 ? `${(stalledMs / 1000).toFixed(1)} s (${((stalledMs / elapsed) * 100).toFixed(1)}%)` : '–');
-  // Hashes go out after frames 0, 60, 120 and so on; session.frame is the next frame to simulate.
-  const checks = Math.ceil(match.session.frame / 60);
+  // Hashes go out after frames 0, 60, 120 and so on, once the frame is final.
+  const lastFinal = Math.min(match.session.frame - 1, match.session.confirmedFrame);
+  const checks = lastFinal < 0 ? 0 : Math.floor(lastFinal / 60) + 1;
   if (desyncFrame !== null) setStat('s-hash', `Desync at frame ${desyncFrame}`, 'bad');
   else setStat('s-hash', checks > 0 ? `${checks} sent, all matching` : '–', checks > 0 ? 'good' : '');
   setStat('s-result', end ? resultText(end) : 'Playing', end ? (end.reason === 'finished' ? 'good' : 'bad') : '');
 }
+
+// The account panel: passkeys and the cloud move library, to try on phones before the game has them.
+
+const accounts = new AccountClient();
+const accountButtons = {
+  create: $<HTMLButtonElement>('account-create'),
+  signIn: $<HTMLButtonElement>('account-signin'),
+  quick: $<HTMLButtonElement>('account-quick'),
+  cancel: $<HTMLButtonElement>('account-cancel'),
+  save: $<HTMLButtonElement>('account-save'),
+  signOut: $<HTMLButtonElement>('account-signout'),
+};
+
+function showAccountButtons(signedIn: boolean | null): void {
+  accountButtons.create.hidden = accountButtons.signIn.hidden = signedIn !== false;
+  accountButtons.save.hidden = accountButtons.signOut.hidden = signedIn !== true;
+  // Quick match is offered while signed in and not searching, outside a room or left alone in a quick one.
+  const aloneInQuickRoom = client !== null && client.opponent !== null && (room?.players.length ?? 0) < 2;
+  accountButtons.quick.hidden = signedIn !== true || (client !== null && !aloneInQuickRoom) || searcher?.searching === true;
+  accountButtons.cancel.hidden = searcher?.searching !== true;
+}
+
+async function refreshAccount(): Promise<void> {
+  const status = $('account-status');
+  if (!passkeysSupported()) {
+    showAccountButtons(null);
+    status.textContent = 'Passkeys need HTTPS: they work on staging or on localhost, not on a Wi-Fi address like this one.';
+    return;
+  }
+  const { account, passkeys } = await accounts.status();
+  if (!passkeys) {
+    showAccountButtons(null);
+    status.textContent = 'This server has accounts switched off, or is not on a domain name.';
+    return;
+  }
+  showAccountButtons(account !== null);
+  if (!account) {
+    status.textContent = 'Not signed in. Make a passkey under your nickname, or sign in with one you made before.';
+    return;
+  }
+  const library = await accounts.getLibrary();
+  const count = library.moves.length;
+  status.textContent = `Signed in as ${account.name}. Cloud library: ${count} ${count === 1 ? 'move' : 'moves'}.`;
+}
+
+function accountAction(button: HTMLButtonElement, action: () => Promise<unknown>): void {
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await action();
+      await refreshAccount();
+    } catch (err) {
+      $('account-status').textContent = accountErrorText(err);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function accountErrorText(err: unknown): string {
+  if (err instanceof ApiRequestError) return err.message;
+  // The browser rejects with NotAllowedError when the prompt is cancelled or times out.
+  if (err instanceof DOMException && err.name === 'NotAllowedError') return 'The passkey prompt was cancelled or timed out.';
+  if (err instanceof DOMException && err.name === 'InvalidStateError') return 'This phone already has a passkey for this site; sign in with it instead.';
+  return err instanceof Error ? err.message : String(err);
+}
+
+accountAction(accountButtons.create, () => accounts.createAccount(nicknameInput.value));
+accountAction(accountButtons.signIn, () => accounts.signIn());
+accountAction(accountButtons.save, () =>
+  accounts.saveMove({ move: toyLoadout()[0]!, kind: 'move', description: "The relay lab's toy jab", quality: null, createdAt: Date.now() }),
+);
+accountAction(accountButtons.signOut, () => accounts.signOut());
+accountButtons.quick.addEventListener('click', () => {
+  startQuickMatch().catch((err: unknown) => ($('account-status').textContent = accountErrorText(err)));
+});
+accountButtons.cancel.addEventListener('click', () => {
+  searcher?.cancelQuickMatch();
+  $('account-status').textContent = 'Stopped looking.';
+  showAccountButtons(true);
+});
+refreshAccount().catch((err: unknown) => ($('account-status').textContent = accountErrorText(err)));
 
 // One loop drives the match, the drawing and the stats.
 

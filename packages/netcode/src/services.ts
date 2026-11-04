@@ -66,19 +66,27 @@ export class ServicesClient {
     return this.request('GET', '/version');
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const response = await this.fetch(this.baseUrl + path, {
-      method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const data: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      const error = data as Partial<ApiError> | null;
-      throw new ApiRequestError(response.status, error?.error ?? 'http_error', error?.message ?? `HTTP ${response.status}`);
-    }
-    return data as T;
+  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return requestJson<T>(this.fetch, method, this.baseUrl + path, body);
   }
+}
+
+/**
+ * One JSON call to the services. Throws ApiRequestError with the server's error code on a
+ * failed status; a reply with no body (204) comes back as null.
+ */
+export async function requestJson<T>(fetchFn: typeof fetch, method: string, url: string, body?: unknown): Promise<T> {
+  const response = await fetchFn(url, {
+    method,
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = data as Partial<ApiError> | null;
+    throw new ApiRequestError(response.status, error?.error ?? 'http_error', error?.message ?? `HTTP ${response.status}`);
+  }
+  return data as T;
 }
 
 export interface MoveNameSuggestion {

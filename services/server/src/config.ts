@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CLIENT_VERSION } from '@sticxcape/shared';
+import { CLIENT_VERSION, LIBRARY_MAX_MOVES } from '@sticxcape/shared';
 
 export interface RoomsConfig {
   /** Rooms the server holds at once before refusing new ones. */
@@ -44,10 +44,24 @@ export interface AiConfig {
   timeoutMs: number;
   moveNamesPerDay: number;
   matchTipsPerDay: number;
+  /** Nickname checks before quick match; repeats of a checked name are free (cached). */
+  nicknameChecksPerDay: number;
   /** One IP may use this many players' worth of the daily limits (shared Wi-Fi, rotated ids). */
   perIpMultiplier: number;
   cacheEntries: number;
   cacheTtlMs: number;
+}
+
+export interface AccountsConfig {
+  /** SQLite file for accounts and cloud move libraries, ':memory:' for tests, or null to turn accounts off. */
+  databaseFile: string | null;
+  /** Moves one cloud library may hold. */
+  maxMoves: number;
+  /** Passkey sign-ups and sign-ins one IP address may start per window. */
+  passkeyLimitPerIp: number;
+  passkeyWindowMs: number;
+  /** How long a sign-in lasts without being used. */
+  sessionTtlMs: number;
 }
 
 export interface MonitoringConfig {
@@ -83,11 +97,25 @@ export interface Config {
   rooms: RoomsConfig;
   relay: RelayConfig;
   ai: AiConfig;
+  accounts: AccountsConfig;
   monitoring: MonitoringConfig;
 }
 
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DEFAULT_LAB_ROOT = fileURLToPath(new URL('../dist/lab/', import.meta.url));
+/** In development accounts live in services/server/data (gitignored). Production sets DATABASE_FILE on its volume. */
+const DEV_DATABASE_FILE = fileURLToPath(new URL('../data/sticxcape.db', import.meta.url));
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Muse Spark 1.1 answered in about 2.3 s (median) in live tests on 2026-11-04, against 3.3 s for
+ * 1.3, whose slowest replies went past the 4.5 s budget and would have fallen back. Same price,
+ * and its names and tips were as good.
+ */
+const DEFAULT_AI_MODEL = 'muse-spark-1.1';
+
+/** The reasoning levels Muse Spark accepts. It rejects "none", which would make every AI call fall back. */
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.NODE_ENV === 'production' || env.NODE_ENV === 'test' ? env.NODE_ENV : 'development';
@@ -139,14 +167,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ai: {
       apiKey: env.MODEL_API_KEY || null,
       baseUrl: (env.MODEL_API_BASE_URL || 'https://api.meta.ai/v1').replace(/\/+$/, ''),
-      model: env.AI_MODEL || 'muse-spark-1.3',
-      reasoningEffort: env.AI_REASONING_EFFORT || 'minimal',
+      model: env.AI_MODEL || DEFAULT_AI_MODEL,
+      reasoningEffort: choice(env, 'AI_REASONING_EFFORT', REASONING_EFFORTS, 'minimal'),
       timeoutMs: int(env, 'AI_TIMEOUT_MS', 4500, 500, 30_000),
       moveNamesPerDay: int(env, 'AI_MOVE_NAMES_PER_DAY', 30, 0, 100_000),
       matchTipsPerDay: int(env, 'AI_MATCH_TIPS_PER_DAY', 60, 0, 100_000),
+      nicknameChecksPerDay: int(env, 'AI_NICKNAME_CHECKS_PER_DAY', 20, 0, 100_000),
       perIpMultiplier: 10,
       cacheEntries: 5000,
       cacheTtlMs: 24 * 60 * 60 * 1000,
+    },
+    accounts: {
+      databaseFile: env.DATABASE_FILE || (mode === 'development' ? DEV_DATABASE_FILE : null),
+      maxMoves: int(env, 'LIBRARY_MAX_MOVES', LIBRARY_MAX_MOVES, 1, 10_000),
+      passkeyLimitPerIp: int(env, 'PASSKEYS_PER_IP_PER_10_MIN', 30, 1, 10_000),
+      passkeyWindowMs: 10 * 60 * 1000,
+      sessionTtlMs: 180 * DAY_MS,
     },
     monitoring: {
       adminToken: env.ADMIN_TOKEN || null,
@@ -173,6 +209,14 @@ function flag(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean 
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
   if (['0', 'false', 'no', 'off'].includes(raw)) return false;
   throw new Error(`${name} must be true or false`);
+}
+
+function choice<T extends string>(env: NodeJS.ProcessEnv, name: string, allowed: readonly T[], fallback: T): T {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = allowed.find((option) => option === raw);
+  if (value === undefined) throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
+  return value;
 }
 
 function origin(name: string, value: string): string {
