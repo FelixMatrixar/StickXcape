@@ -148,10 +148,13 @@ describe('quick match', () => {
     await bo.client.blockPlayer(ana.account.id);
     const [anaRelay, boRelay, cyRelay] = await Promise.all([relayFor(server, ana.cookie), relayFor(server, bo.cookie), relayFor(server, cy.cookie)]);
 
-    const queued = Promise.all([nextEvent(anaRelay, 'queued'), nextEvent(boRelay, 'queued')]);
+    // Ana queues first: requests on two sockets can reach the relay in either order.
+    const anaQueued = nextEvent(anaRelay, 'queued');
     anaRelay.quickMatch('Ana');
+    await anaQueued;
+    const boQueued = nextEvent(boRelay, 'queued');
     boRelay.quickMatch('Bo');
-    await queued;
+    await boQueued;
     // The matchmaker runs every second; give it two goes.
     await new Promise((resolve) => setTimeout(resolve, 2100));
     expect(server.services.relay.queueSize).toBe(2);
