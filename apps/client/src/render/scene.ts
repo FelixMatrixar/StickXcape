@@ -277,6 +277,7 @@ export class FightScene {
         ps.clearDecals();
         this.popups.clear();
         for (const view of this.views) view.ragdoll = null;
+        this.camera.edgeMargin = this.sim.dropLeft || this.sim.dropRight ? 1.7 : 0.6;
         this.syncViews(true);
         this.timeScale = 1;
         this.slowmo = 0;
@@ -463,7 +464,7 @@ export class FightScene {
         }
         ps.spawn(K.ring, x, y, { size: 0.08, size2: 0.85, life: 0.4, color: '#cfe0ff' });
         sparks(ps, x, y, 12, 8, '#e4edff');
-        this.popups.show('GUARD BREAK', x, y + 0.55, { fill: '#e9f0ff', stroke: '#1b3a92', size: 0.25, life: 1.1 });
+        this.popups.show('GUARD BREAK', x, y + 0.25, { fill: '#e9f0ff', stroke: '#1b3a92', size: 0.25, life: 1.1 });
         this.views[event.side].flash = 0.7;
         this.flashAlpha = Math.max(this.flashAlpha, 0.18 * this.flashes);
         this.camera.addTrauma(0.32);
@@ -487,10 +488,13 @@ export class FightScene {
         return;
       }
       case 'ringout': {
-        // Off the edge: slow motion while they fall (CB-8).
+        // Off the edge: slow motion while they tumble into the street (CB-8).
+        const faller = this.sim.fighters[event.side];
+        this.goLimp(event.side as 0 | 1, fromFixed(faller.vx) * 60, fromFixed(faller.vy) * 60);
+        this.camera.edgeMargin = 3.2;
         this.slowmo = 1;
         this.koDim = 0.7;
-        this.camera.focus(fromFixed(event.x), -0.6, 0.55, 2.4, 0.08);
+        this.camera.focus(fromFixed(event.x), -0.6, 0.35, 2.4, 0);
         this.camera.addTrauma(0.2);
         this.sound?.fall();
         this.haptic?.('ko');
@@ -532,8 +536,20 @@ export class FightScene {
     this.camera.zoomPunch(0.14);
     this.camera.focus(x, y, 0.6, 2.2, 0.32);
     // The loser goes limp: a ragdoll launched along the final blow.
-    for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = fromFixed(loser.world[i]);
-    const ragdoll = new Ragdoll(view.world, fromFixed(event.vx) * 60, fromFixed(event.vy) * 60, -loser.facing * 6.5 * (0.7 + Math.random() * 0.6));
+    this.goLimp(event.side as 0 | 1, fromFixed(event.vx) * 60, fromFixed(event.vy) * 60);
+    view.flash = 1;
+    void winner;
+    this.sound?.ko();
+    this.haptic?.('ko');
+  }
+
+  /** Hands a fighter over to the cosmetic ragdoll, so slow motion applies to the fall. */
+  private goLimp(side: 0 | 1, vx: number, vy: number): void {
+    const ps = this.particles;
+    const f = this.sim.fighters[side];
+    const view = this.views[side];
+    for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = fromFixed(f.world[i]);
+    const ragdoll = new Ragdoll(view.world, vx, vy, -f.facing * 6.5 * (0.7 + Math.random() * 0.6));
     ragdoll.arenaWidth = fromFixed(this.sim.arenaWidth);
     ragdoll.dropLeft = this.sim.dropLeft;
     ragdoll.dropRight = this.sim.dropRight;
@@ -544,10 +560,6 @@ export class FightScene {
       this.sound?.body(strength, this.pan(px));
     };
     view.ragdoll = ragdoll;
-    view.flash = 1;
-    void winner;
-    this.sound?.ko();
-    this.haptic?.('ko');
   }
 
   // Frames.

@@ -64,17 +64,17 @@ const TWO: (ButtonDef & { dx: number; dy: number })[] = [
  * direction held with a button (Light 2, Heavy 2, Low, Taunt) get their own button instead.
  */
 const ONE: (ButtonDef & { angle: number })[] = [
-  { key: 'block', label: '', caption: 'Block', hold: B.Block, color: '#4f7cff', size: 60, angle: 100 },
-  { key: 'd', label: 'D', caption: 'Defense', hold: B.Defense, color: '#0f9f7c', size: 52, angle: 130 },
-  { key: 'l', label: 'L', caption: 'Light', hold: B.Light, color: '#e8432d', size: 52, angle: 160 },
-  { key: 'l2', label: 'L2', caption: 'Light 2', hold: B.Light, pulse: B.Right, color: '#e8432d', size: 52, angle: 190 },
-  { key: 'low', label: '↓H', caption: 'Low', hold: B.Heavy, pulse: B.Down, color: '#de3790', size: 52, angle: 220 },
-  { key: 'h', label: 'H', caption: 'Heavy', hold: B.Heavy, color: '#de3790', size: 52, angle: 250 },
-  { key: 'h2', label: 'H2', caption: 'Heavy 2', hold: B.Heavy, pulse: B.Right, color: '#de3790', size: 52, angle: 280 },
-  { key: 's', label: 'S', caption: 'Special', hold: B.Special, color: '#ee960c', size: 52, angle: 310 },
-  { key: 'taunt', label: '↓D', caption: 'Taunt', hold: B.Defense, pulse: B.Down, color: '#7a4fe0', size: 52, angle: 340 },
+  { key: 'block', label: '', caption: 'Block', hold: B.Block, color: '#4f7cff', size: 62, angle: 100 },
+  { key: 'd', label: 'D', caption: 'Defense', hold: B.Defense, color: '#0f9f7c', size: 56, angle: 130 },
+  { key: 'l', label: 'L', caption: 'Light', hold: B.Light, color: '#e8432d', size: 56, angle: 160 },
+  { key: 'l2', label: 'L2', caption: 'Light 2', hold: B.Light, pulse: B.Right, color: '#e8432d', size: 56, angle: 190 },
+  { key: 'low', label: '↓H', caption: 'Low', hold: B.Heavy, pulse: B.Down, color: '#de3790', size: 56, angle: 220 },
+  { key: 'h', label: 'H', caption: 'Heavy', hold: B.Heavy, color: '#de3790', size: 56, angle: 250 },
+  { key: 'h2', label: 'H2', caption: 'Heavy 2', hold: B.Heavy, pulse: B.Right, color: '#de3790', size: 56, angle: 280 },
+  { key: 's', label: 'S', caption: 'Special', hold: B.Special, color: '#ee960c', size: 56, angle: 310 },
+  { key: 'taunt', label: '↓D', caption: 'Taunt', hold: B.Defense, pulse: B.Down, color: '#7a4fe0', size: 56, angle: 340 },
 ];
-const ONE_RING = 104;
+const ONE_RING = 112;
 const ONE_PAD = 46;
 const PULSE_FRAMES = 2;
 

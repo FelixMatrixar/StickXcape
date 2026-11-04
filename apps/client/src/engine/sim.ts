@@ -120,7 +120,6 @@ const ROLL_FRAMES = 22;
 const ROLL_SPEED = toFixed(0.062);
 const ROLL_INVULN = 28;
 // Ring-outs (CB-8): past a drop edge there is no floor.
-const RINGOUT_DEPTH = toFixed(-1.4);
 const RINGOUT_FRAMES = 200;
 const FALL_LIMIT = toFixed(-30);
 const NO_LIMIT = toFixed(100);
@@ -808,10 +807,9 @@ export class FightSim {
           f.y = Math.max(FALL_LIMIT, f.y + f.vy);
           f.vx = fixedMul(f.vx, AIR_DRAG);
           if (f.y <= 0) {
-            if (this.offEdge(f)) f.falling = 1;
+            if (this.offEdge(f)) this.startFalling(f);
             else if (!f.falling) this.landed(f);
           }
-          if (f.falling && f.y < RINGOUT_DEPTH) this.ringout(f);
         } else {
           f.x += f.vx;
           f.vx = fixedMul(f.vx, FRICTION);
@@ -846,9 +844,9 @@ export class FightSim {
     f.x = clamp(f.x, lo, hi);
     // Slid off a drop edge: no floor, so down they go.
     if (!f.falling && f.y <= 0 && this.offEdge(f)) {
-      f.falling = 1;
       if (f.state !== S.ko) this.setState(f, S.launched, 0, 3);
       f.y = -1;
+      this.startFalling(f);
     }
   }
 
@@ -862,6 +860,13 @@ export class FightSim {
 
   private offEdge(f: Fighter): boolean {
     return (this.dropLeft && f.x < 0) || (this.dropRight && f.x > this.arenaWidth);
+  }
+
+  /** Past a drop edge and below the roof: there is no coming back, so the round ends now. */
+  private startFalling(f: Fighter): void {
+    if (f.falling) return;
+    f.falling = 1;
+    this.ringout(f);
   }
 
   private ringout(f: Fighter): void {

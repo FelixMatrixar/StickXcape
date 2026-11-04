@@ -102,7 +102,7 @@ export class FightCamera {
     let ppm = Math.min(this.width / span, this.height / 3.55);
     let x = (targets.x0 + targets.x1) / 2;
     // Rise for jumps; sink to follow a fall off a drop edge.
-    const sink = Math.max(-2.4, Math.min(0, targets.bottom ?? 0)) * 0.85;
+    const sink = Math.max(-0.8, Math.min(0, targets.bottom ?? 0)) * 0.7;
     const lift = Math.max(0, targets.top - 2.25) * 0.75 + sink;
 
     // Focus: lean toward a point and push in.
