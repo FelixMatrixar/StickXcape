@@ -270,6 +270,13 @@ function lerpPose(a: FloatPose, b: FloatPose, t: number): FloatPose {
   out[0] = a[0] + (b[0] - a[0]) * t;
   out[1] = a[1] + (b[1] - a[1]) * t;
   for (let i = A0; i < POSE_SIZE; i++) {
+    // A joint with limits bends through its range, never the short way round: from a slightly
+    // overstraight elbow (30°) to a folded one (-170°) the short way bends it backwards.
+    if (LIMITED.has(i)) {
+      const from = wrapPi(a[i]);
+      out[i] = from + (wrapPi(b[i]) - from) * t;
+      continue;
+    }
     let d = (b[i] - a[i]) % TAU;
     if (d > Math.PI) d -= TAU;
     if (d < -Math.PI) d += TAU;
@@ -478,6 +485,8 @@ const LIMITS: [number, number, number][] = [
   [J.rToe, -150, 25],
   [J.head, -80, 80],
 ];
+/** Pose indices of the joints in LIMITS, which lerpPose moves inside their range. */
+const LIMITED = new Set(LIMITS.map(([joint]) => A0 + joint));
 /** Hip: the thigh's angle from the spine line, 15° (folded) to 250° (leg swept back; a lean-back bends the lower back too). */
 const HIP_MIN = 15 * RAD;
 const HIP_MAX = 250 * RAD;
