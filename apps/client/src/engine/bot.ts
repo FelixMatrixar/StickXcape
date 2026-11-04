@@ -6,7 +6,7 @@
 import { Button, Rng } from '@sticxcape/shared';
 import { toFixed } from './fixed.ts';
 import { HIGH, isActiveFrame, LOW } from './moves.ts';
-import { S, type FightSim, type Fighter } from './sim.ts';
+import { GRAB_RANGE, HEAVY_COST, S, SPECIAL_COST, type FightSim, type Fighter } from './sim.ts';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
 
@@ -19,12 +19,14 @@ interface Tuning {
   aggression: number;
   punish: number;
   combo: number;
+  /** Chance per frame to grab an opponent who keeps blocking. */
+  grab: number;
 }
 
 const TUNING: Record<BotLevel, Tuning> = {
-  easy: { reaction: 24, block: 0.25, parry: 0.02, jumpLow: 0.1, aggression: 0.02, punish: 0.2, combo: 0.15 },
-  normal: { reaction: 15, block: 0.55, parry: 0.12, jumpLow: 0.3, aggression: 0.035, punish: 0.55, combo: 0.5 },
-  hard: { reaction: 9, block: 0.75, parry: 0.3, jumpLow: 0.5, aggression: 0.05, punish: 0.85, combo: 0.85 },
+  easy: { reaction: 24, block: 0.25, parry: 0.02, jumpLow: 0.1, aggression: 0.02, punish: 0.2, combo: 0.15, grab: 0.01 },
+  normal: { reaction: 15, block: 0.55, parry: 0.12, jumpLow: 0.3, aggression: 0.035, punish: 0.55, combo: 0.5, grab: 0.04 },
+  hard: { reaction: 9, block: 0.75, parry: 0.3, jumpLow: 0.5, aggression: 0.05, punish: 0.85, combo: 0.85, grab: 0.08 },
 };
 
 interface Seen {
@@ -35,6 +37,8 @@ interface Seen {
 }
 
 const NEAR = toFixed(0.25);
+/** Someone this close past a ledge's end still counts as on or behind it. */
+const LEDGE_REACH = toFixed(0.2);
 
 export class PracticeBot {
   readonly side: 0 | 1;
@@ -96,6 +100,10 @@ export class PracticeBot {
 
     // Landed a light hit: cancel into a heavy.
     if (me.state === S.attack && me.cancel && this.chance(this.tune.combo)) return this.tap(Button.Heavy, me);
+    if (me.state === S.knockdown && me.stun <= 3) {
+      const roll = this.rng.nextInt(10);
+      return this.hold(roll < 4 ? back : roll < 7 ? fwd : 0, 4, me);
+    }
     if (me.state !== S.idle && me.state !== S.block) return this.emit(me, me.state === S.blockstun ? Button.Block : 0);
 
     // React to what we saw of their attack.
@@ -110,7 +118,7 @@ export class PracticeBot {
           return this.emit(me, 0);
         }
         if (low && this.chance(this.tune.jumpLow)) return this.hold(Button.Up | fwd, 6, me);
-        if (this.chance(this.tune.block)) {
+        if (this.chance(me.guard < 260 ? this.tune.block * 0.4 : this.tune.block)) {
           const crouch = low || (move.height === HIGH && this.chance(0.4));
           return this.hold(Button.Block | (crouch ? Button.Down : 0), move.active + Math.max(4, move.startup - seen.moveT), me);
         }
@@ -122,14 +130,18 @@ export class PracticeBot {
     const range = light ? light.reach : toFixed(0.8);
     const heavy = me.moves[me.slots.heavy[0]];
 
-    // Punish whiffs, staggers and a missed parry.
+    if ((them.state === S.block || them.state === S.parry) && gap <= GRAB_RANGE && this.chance(this.tune.grab)) return this.tap(Button.Light | Button.Heavy, me);
+
+    // Punish whiffs, staggers, a missed parry and a missed grab.
     const theirMove = them.currentMove;
     const recovering =
       (them.state === S.attack && theirMove && !isActiveFrame(theirMove, them.moveT) && them.moveT > theirMove.startup) ||
       them.state === S.stagger ||
-      them.state === S.parryWhiff;
+      them.state === S.parryWhiff ||
+      them.state === S.guardBreak ||
+      (them.state === S.grab && them.stateT > 11);
     if (recovering && gap < (heavy ? heavy.reach : range) + NEAR && this.chance(this.tune.punish)) {
-      return this.tap(this.chance(0.35) ? Button.Special : Button.Heavy, me);
+      return this.tap(this.chance(0.35) && me.stamina >= SPECIAL_COST ? Button.Special : me.stamina >= HEAVY_COST ? Button.Heavy : Button.Light, me);
     }
 
     // They are down: keep a respectful distance, sometimes taunt.
@@ -138,6 +150,9 @@ export class PracticeBot {
       return this.hold(gap < toFixed(1.4) ? back : 0, 8, me);
     }
 
+    // A ledge in the way (AR-6), or them standing on one: hop up.
+    if (this.ledgeAhead(sim, me, them) && this.chance(0.3)) return this.hold(Button.Up | fwd, 6, me);
+
     // Spacing and offence.
     if (gap > range + toFixed(0.45)) {
       if (this.chance(0.012)) return this.hold(Button.Up | fwd, 4, me);
@@ -145,7 +160,7 @@ export class PracticeBot {
       return this.hold(fwd, 6 + this.rng.nextInt(10), me);
     }
     if (gap < range + NEAR && this.chance(this.tune.aggression * 3)) {
-      const roll = this.rng.nextInt(100);
+      const roll = me.stamina >= SPECIAL_COST ? this.rng.nextInt(100) : me.stamina >= HEAVY_COST ? this.rng.nextInt(88) : this.rng.nextInt(60);
       if (them.state === S.block && !them.crouch && roll < 45) return this.tap(Button.Heavy | Button.Down, me);
       if (roll < 45) return this.tap(Button.Light, me);
       if (roll < 60) return this.tap(Button.Light | fwd, me);
@@ -158,6 +173,18 @@ export class PracticeBot {
     if (this.chance(0.02)) return this.hold(fwd, 6, me);
     if (this.chance(0.01)) return this.hold(back, 10, me);
     return this.emit(me, 0);
+  }
+
+  /** True when a ledge stands between us, close in front, and we're below its top. */
+  private ledgeAhead(sim: FightSim, me: Fighter, them: Fighter): boolean {
+    const right = them.x > me.x;
+    for (const ledge of sim.ledges) {
+      if (me.y >= ledge.top) continue;
+      const between = right ? ledge.x1 > me.x && ledge.x0 < them.x + LEDGE_REACH : ledge.x0 < me.x && ledge.x1 > them.x - LEDGE_REACH;
+      const ahead = right ? ledge.x0 - me.x : me.x - ledge.x1;
+      if (between && ahead >= 0 && ahead < toFixed(0.6)) return true;
+    }
+    return false;
   }
 
   private hold(buttons: number, frames: number, me: Fighter): number {

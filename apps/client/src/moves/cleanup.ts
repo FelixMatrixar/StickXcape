@@ -85,6 +85,13 @@ export interface CleanCapture {
   quality: number;
   /** Mean leftover jitter in degrees, for retake tips. */
   jitter: number;
+  /** Frames the physics check had to correct (MS-10). */
+  corrected: number;
+}
+
+export interface CleanOptions {
+  /** Performed at half speed, to be played at full speed within the speed cap (safer for kicks). */
+  halfSpeed?: boolean;
 }
 
 export interface MoveInfo {
@@ -280,10 +287,11 @@ function lowestFootF(pose: FloatPose, scratch: Float64Array): number {
 // The pipeline.
 
 /** Cleans a capture. `aspect` is the video's width over its height. */
-export function cleanCapture(raw: PoseFrame[], aspect: number): CleanCapture {
+export function cleanCapture(raw: PoseFrame[], aspect: number, options: CleanOptions = {}): CleanCapture {
   const usable = raw.filter((frame) => frame.points.length >= 33 * 4);
   if (usable.length < 12) throw new CleanupError('Not enough of you was tracked. Step back so your whole body is in frame.');
-  const track = resample(usable, aspect);
+  let track = resample(usable, aspect);
+  if (options.halfSpeed) track = speedUp(track, 2);
   const n = track.count;
   if (n < 20) throw new CleanupError('That take was too short. Try again and keep moving for a second or two.');
 
@@ -393,12 +401,14 @@ export function cleanCapture(raw: PoseFrame[], aspect: number): CleanCapture {
   }
 
   // Foot locking: a planted foot stays where it landed.
+  // Physics check (MS-10): no joint bends past what a body can do.
+  const corrected = clampJoints(frames, scratch);
   lockFeet(frames, footHs);
 
   // Step 6: speed cap, then auto-trim to the motion.
   frames = capSpeed(frames);
   const trim = autoTrim(frames);
-  return { frames, trim, quality, jitter: jitterDeg };
+  return { frames, trim, quality, jitter: jitterDeg, corrected };
 }
 
 const ARM_CHAINS: [number[], number[]] = [
@@ -442,6 +452,88 @@ function fixSideSwaps(track: JointTrack): void {
       }
     }
   }
+}
+
+/** Plays a track faster: a half-speed take becomes full speed. The speed cap still applies after. */
+function speedUp(track: JointTrack, factor: number): JointTrack {
+  const count = Math.max(2, Math.floor((track.count - 1) / factor) + 1);
+  const xy = new Float64Array(count * JOINT_COUNT * 2);
+  const vis = new Float64Array(count * JOINT_COUNT);
+  for (let f = 0; f < count; f++) {
+    const src = Math.min(track.count - 1, f * factor);
+    xy.set(track.xy.subarray(src * JOINT_COUNT * 2, (src + 1) * JOINT_COUNT * 2), f * JOINT_COUNT * 2);
+    vis.set(track.vis.subarray(src * JOINT_COUNT, (src + 1) * JOINT_COUNT), f * JOINT_COUNT);
+  }
+  return { xy, vis, count };
+}
+
+const RAD = Math.PI / 180;
+/** Joint limits in degrees for local angles: [joint, min, max]. Generous, because a side-on 2D view can make a real bend look odd. */
+const LIMITS: [number, number, number][] = [
+  [J.lAnkle, -25, 165],
+  [J.rAnkle, -25, 165],
+  [J.lWrist, -170, 30],
+  [J.rWrist, -170, 30],
+  [J.lToe, -150, 25],
+  [J.rToe, -150, 25],
+  [J.head, -80, 80],
+];
+/** Hip: the thigh's angle from the spine line, 15° (folded) to 250° (leg swept back; a lean-back bends the lower back too). */
+const HIP_MIN = 15 * RAD;
+const HIP_MAX = 250 * RAD;
+
+function wrapPi(a: number): number {
+  return a - Math.round(a / TAU) * TAU;
+}
+
+function wrapTau(a: number): number {
+  return ((a % TAU) + TAU) % TAU;
+}
+
+/**
+ * Clamps an angle into [lo, hi], stopping at whichever limit is nearer around the circle. An elbow
+ * folded just past 180° wraps to a positive angle; it belongs on the full-bend limit, not flipped
+ * to the far one.
+ */
+function clampAngle(a: number, lo: number, hi: number): number {
+  const w = wrapPi(a);
+  if (w >= lo && w <= hi) return w;
+  return wrapTau(w - hi) <= wrapTau(lo - w) ? hi : lo;
+}
+
+/** Bends any joint past human limits back to the nearer limit (MS-10). True if anything moved. */
+export function clampPose(pose: FloatPose): boolean {
+  let changed = false;
+  for (const [joint, lo, hi] of LIMITS) {
+    const a = wrapPi(pose[A0 + joint]);
+    const c = clampAngle(a, lo * RAD, hi * RAD);
+    if (Math.abs(c - a) > 0.5 * RAD) changed = true;
+    pose[A0 + joint] = c;
+  }
+  for (const knee of [J.lKnee, J.rKnee]) {
+    const spine = pose[A0 + J.neck] + pose[A0 + J.pelvis];
+    const thigh = pose[A0 + J.pelvis] + pose[A0 + (knee === J.lKnee ? J.lHip : J.rHip)] + pose[A0 + knee];
+    let d = (thigh - spine) % TAU;
+    if (d < 0) d += TAU;
+    if (d >= HIP_MIN && d <= HIP_MAX) continue;
+    const target = d > HIP_MAX && d < HIP_MAX + (TAU - HIP_MAX + HIP_MIN) / 2 ? HIP_MAX : HIP_MIN;
+    pose[A0 + knee] += target - d;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Clamps joints past human limits; returns how many frames needed it. */
+function clampJoints(frames: FloatPose[], scratch: Float64Array): number {
+  let fixed = 0;
+  for (const pose of frames) {
+    if (!clampPose(pose)) continue;
+    fixed += 1;
+    // The feet may have moved: keep them on the floor.
+    const low = lowestFootF(pose, scratch);
+    if (pose[1] + low < 0) pose[1] = -low;
+  }
+  return fixed;
 }
 
 /** Which way the nose points relative to the ears, per frame (for facing). */
@@ -668,6 +760,22 @@ export function encodeMove(frames: FloatPose[], info: MoveInfo, options: Pick<Bu
     limb: info.limb,
     height: info.height,
   };
+}
+
+/**
+ * An idle stance (LS-12): the trimmed take held in place and closed into a seamless loop. It is
+ * drawn between moves for looks only, so it needs no strike and no stance blend.
+ */
+export function prepareIdle(clean: CleanCapture, trim: [number, number]): FloatPose[] {
+  const frames: FloatPose[] = clean.frames.slice(trim[0], trim[1] + 1).map((f) => f.slice());
+  for (const pose of frames) pose[0] = 0;
+  const fade = Math.min(14, Math.floor(frames.length / 3));
+  const first = frames[0];
+  for (let i = 0; i < fade; i++) {
+    const at = frames.length - fade + i;
+    frames[at] = lerpPose(frames[at], first, (i + 1) / (fade + 1));
+  }
+  return frames.slice(0, MOVE_MAX_FRAMES);
 }
 
 /** Plain-language tips when a take is shaky (MS-9). */

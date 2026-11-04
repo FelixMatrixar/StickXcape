@@ -38,7 +38,7 @@ npm run dev:client
 
 The first starts the services on port 8080; the second serves the game on port 5173 and forwards rooms, the relay and AI calls to the services. Open http://localhost:5173. Practice fights and Move Studio work without the services; rooms, move names and coach tips need them.
 
-On a computer: A and D walk, W jumps, S crouches, J light, K heavy, L special, I defense, Space blocks (tap it just before a hit lands to parry). Gamepads work too. On phones the on-screen stick and buttons appear.
+On a computer: A and D walk, W jumps, S crouches, J light, K heavy, L special, I defense, Space blocks (tap it just before a hit lands to parry), and J with K grabs. Gamepads work too. On phones the on-screen stick and buttons appear; Settings has one-thumb layouts for either hand and an Arrange screen to drag the buttons where your thumbs rest.
 
 To fight online from one computer, create a room in the browser and let a bot join it:
 

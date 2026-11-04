@@ -6,6 +6,8 @@ import { onSettings, settings, updateSettings } from '../app/settings.ts';
 import { audio } from '../audio/engine.ts';
 import { ui } from '../audio/sfx.ts';
 import type { BotLevel } from '../engine/bot.ts';
+import type { ControlLayout } from '../app/settings.ts';
+import { openControlsEditor } from './controls-editor.ts';
 import { h, press, svg } from './dom.ts';
 import { ICON } from './icons.ts';
 
@@ -148,7 +150,23 @@ export function openSettings(): void {
     row('Vibration', 'Android only; iPhones can’t vibrate from a browser', toggle(settings.vibration, (on) => updateSettings({ vibration: on }))),
     h('div', { class: 'kicker', style: 'margin-top:16px', text: 'Fight' }),
     row('Damage numbers', 'Show how much each hit took', toggle(settings.damageNumbers, (on) => updateSettings({ damageNumbers: on }))),
+    h('div', { class: 'kicker', style: 'margin-top:16px', text: 'Controls' }),
+    h(
+      'div',
+      { class: 'setting', style: 'flex-direction:column;align-items:stretch' },
+      h('div', { class: 'setting-text' }, h('span', { class: 'setting-title', text: 'Layout' }), h('span', { class: 'setting-hint', text: 'One thumb puts every move around the stick on one side' })),
+      segmented<ControlLayout>(
+        [
+          { value: 'two', label: 'Two thumbs' },
+          { value: 'oneRight', label: 'One · right' },
+          { value: 'oneLeft', label: 'One · left' },
+        ],
+        settings.controlLayout,
+        (layout) => updateSettings({ controlLayout: layout }),
+      ),
+    ),
     row('Button size', 'Scale the on-screen controls', slider(settings.buttonScale, (v) => updateSettings({ buttonScale: v }), 0.75, 1.35, 0.05)),
+    row('Arrange buttons', 'Drag each control where your thumbs rest', press(h('button', { class: 'btn btn-small', text: 'Arrange' }), () => openControlsEditor())),
     row(
       'Practice bot',
       'How sharp the bot reacts',

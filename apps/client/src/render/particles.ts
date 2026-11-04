@@ -328,10 +328,11 @@ export function sparks(ps: Particles, x: number, y: number, count: number, speed
   }
 }
 
-export function dust(ps: Particles, x: number, count: number, spread: number, strength = 1, color = 'rgba(120,105,90,0.55)'): void {
+/** Puffs kicked up from the ground (or a ledge top) at height y. */
+export function dust(ps: Particles, x: number, count: number, spread: number, strength = 1, y = 0, color = 'rgba(120,105,90,0.55)'): void {
   for (let i = 0; i < count; i++) {
     const side = Math.random() < 0.5 ? -1 : 1;
-    ps.spawn(K.puff, x + (Math.random() - 0.5) * spread * 0.3, 0.03 + Math.random() * 0.05, {
+    ps.spawn(K.puff, x + (Math.random() - 0.5) * spread * 0.3, y + 0.03 + Math.random() * 0.05, {
       vx: side * (0.4 + Math.random() * 1.6) * strength,
       vy: 0.15 + Math.random() * 0.5 * strength,
       life: 0.45 + Math.random() * 0.4,

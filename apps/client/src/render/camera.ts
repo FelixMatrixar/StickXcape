@@ -8,6 +8,8 @@ export interface CameraTargets {
   x1: number;
   /** Highest point either fighter reaches, metres. */
   top: number;
+  /** Lowest point, when someone falls off a drop edge. */
+  bottom?: number;
 }
 
 const FLOOR_ROW = 0.8;
@@ -24,6 +26,8 @@ export class FightCamera {
   /** Pixels per metre on the fight plane. */
   ppm = 120;
   arenaWidth = 10;
+  /** How far past the ends of the arena the view may show: more when the edges are drops. */
+  edgeMargin = 0.6;
 
   /** Shake strength 0..1; the offset grows with its square. */
   trauma = 0;
@@ -97,7 +101,9 @@ export class FightCamera {
     const span = Math.max(6, Math.min(10, gap + 3.8));
     let ppm = Math.min(this.width / span, this.height / 3.55);
     let x = (targets.x0 + targets.x1) / 2;
-    const lift = Math.max(0, targets.top - 2.25) * 0.75;
+    // Rise for jumps; sink to follow a fall off a drop edge.
+    const sink = Math.max(-0.8, Math.min(0, targets.bottom ?? 0)) * 0.7;
+    const lift = Math.max(0, targets.top - 2.25) * 0.75 + sink;
 
     // Focus: lean toward a point and push in.
     if (this.focusTime > 0) {
@@ -109,7 +115,7 @@ export class FightCamera {
 
     // Keep the walls near the edge of the frame, not deep inside it.
     const halfSpan = this.width / ppm / 2;
-    const margin = 0.6;
+    const margin = this.edgeMargin;
     if (this.arenaWidth + 2 * margin > halfSpan * 2) x = Math.max(halfSpan - margin, Math.min(this.arenaWidth + margin - halfSpan, x));
     else x = this.arenaWidth / 2;
 

@@ -41,6 +41,17 @@ function lerpDeg(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/** Segments that bend from a parent: blended as a bend, so a forearm never swings through the upper arm. */
+const BENDS_FROM: Partial<Record<(typeof ANGLE_KEYS)[number], (typeof ANGLE_KEYS)[number]>> = {
+  head: 'spine',
+  lFore: 'lUp',
+  rFore: 'rUp',
+  lShin: 'lThigh',
+  rShin: 'rThigh',
+  lFoot: 'lShin',
+  rFoot: 'rShin',
+};
+
 function sample(keys: readonly Key[], frame: number): Spec {
   let i = 0;
   while (i < keys.length - 2 && keys[i + 1][0] <= frame) i++;
@@ -48,7 +59,13 @@ function sample(keys: readonly Key[], frame: number): Spec {
   const [f1, b, kind] = keys[i + 1];
   const t = f1 === f0 ? 1 : ease(Math.min(1, Math.max(0, (frame - f0) / (f1 - f0))), kind ?? 'inout');
   const out: Record<string, number> = {};
-  for (const key of ANGLE_KEYS) out[key] = lerpDeg(a[key] ?? 0, b[key] ?? 0, t);
+  for (const key of ANGLE_KEYS) {
+    const parent = BENDS_FROM[key];
+    // Parents come first in ANGLE_KEYS, so out[parent] is already blended.
+    out[key] = parent
+      ? out[parent] + lerpDeg((a[key] ?? 0) - (a[parent] ?? 0), (b[key] ?? 0) - (b[parent] ?? 0), t)
+      : lerpDeg(a[key] ?? 0, b[key] ?? 0, t);
+  }
   out.x = (a.x ?? 0) + ((b.x ?? 0) - (a.x ?? 0)) * t;
   out.lift = (a.lift ?? 0) + ((b.lift ?? 0) - (a.lift ?? 0)) * t;
   return out as unknown as Spec;
@@ -186,8 +203,8 @@ const DEFS: DefaultMove[] = [
       [6, S({ spine: 20, head: 10, lUp: 150, lFore: 60, rUp: 190, rFore: 120, lThigh: 125, lShin: 190, rThigh: 175, rShin: 225, rFoot: 120 })],
       [12, S({ spine: 2, head: 0, lUp: 100, lFore: 30, rUp: 220, rFore: 160, lThigh: 110, lShin: 200, lFoot: 140, rThigh: 160, rShin: 230, rFoot: 200, lift: 0.3, x: 0.3 }), 'in'],
       [17, S({ spine: -8, head: -2, lUp: 92, lFore: 40, rUp: 226, rFore: 170, lThigh: 72, lShin: 160, lFoot: 120, rThigh: 180, rShin: 240, rFoot: 220, lift: 0.46, x: 0.6 }), 'out'],
-      [21, S({ spine: -20, head: -8, lUp: 60, lFore: 100, rUp: 230, rFore: 180, lThigh: 84, lShin: 94, lFoot: 70, rThigh: 190, rShin: 250, rFoot: 230, lift: 0.45, x: 0.92 }), 'snap'],
-      [25, S({ spine: -18, head: -8, lUp: 64, lFore: 104, rUp: 228, rFore: 178, lThigh: 86, lShin: 96, lFoot: 72, rThigh: 190, rShin: 248, rFoot: 228, lift: 0.36, x: 1.02 })],
+      [21, S({ spine: -20, head: -8, lUp: 60, lFore: 36, rUp: 230, rFore: 180, lThigh: 84, lShin: 94, lFoot: 70, rThigh: 190, rShin: 250, rFoot: 230, lift: 0.45, x: 0.92 }), 'snap'],
+      [25, S({ spine: -18, head: -8, lUp: 64, lFore: 40, rUp: 228, rFore: 178, lThigh: 86, lShin: 96, lFoot: 72, rThigh: 190, rShin: 248, rFoot: 228, lift: 0.36, x: 1.02 })],
       [32, S({ spine: 6, lThigh: 140, lShin: 175, rThigh: 190, rShin: 200, rFoot: 110, lift: 0.12, x: 1.12 }), 'in'],
       [36, S({ spine: 20, head: 10, lUp: 150, lFore: 60, rUp: 180, rFore: 60, lThigh: 125, lShin: 186, rThigh: 175, rShin: 225, rFoot: 120, x: 1.15 })],
       [44, S({ x: 1.15 })],
@@ -216,12 +233,12 @@ const DEFS: DefaultMove[] = [
     active: [0, 1],
     keys: [
       [0, STANCE],
-      [10, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
-      [17, S({ spine: 0, head: -10, lUp: 100, lFore: -24, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
-      [24, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
-      [31, S({ spine: 0, head: -10, lUp: 100, lFore: -24, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
-      [38, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
-      [48, S({ spine: -4, head: -18, lUp: 120, lFore: 40, rUp: 176, rFore: 196, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [10, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [17, S({ spine: 0, head: -10, lUp: 100, lFore: -24, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [24, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [31, S({ spine: 0, head: -10, lUp: 100, lFore: -24, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [38, S({ spine: 0, head: -8, lUp: 100, lFore: 22, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
+      [48, S({ spine: -4, head: -18, lUp: 120, lFore: 40, rUp: 176, rFore: 172, lThigh: 165, lShin: 180, rThigh: 190, rShin: 195 })],
       [60, STANCE],
     ],
   },

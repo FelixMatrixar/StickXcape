@@ -12,9 +12,10 @@ import { settings, updateSettings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import { ui } from '../audio/sfx.ts';
 import { DEMO_ASPECT, demoTake } from '../capture/demo.ts';
+import { bodyBox, HAZARDS, SpaceWatch } from '../capture/space.ts';
 import { CameraError, loadTracker, openCamera, Tracking, type CameraFacing, type PoseFrame } from '../capture/tracker.ts';
 import { J, JOINT_COUNT } from '../engine/skeleton.ts';
-import { analyse, cleanCapture, CleanupError, encodeMove, floatJoints, jitterTip, prepareFrames, type CleanCapture } from '../moves/cleanup.ts';
+import { analyse, cleanCapture, CleanupError, encodeMove, floatJoints, jitterTip, prepareFrames, prepareIdle, type CleanCapture } from '../moves/cleanup.ts';
 import { defaultMoves } from '../moves/defaults.ts';
 import { uuid, withHashSync } from '../moves/hash.ts';
 import { library } from '../moves/library.ts';
@@ -25,6 +26,14 @@ import { h, press, sleep, stagger, svg, toast } from '../ui/dom.ts';
 import { ICON } from '../ui/icons.ts';
 
 const RECORD_SECONDS = 3;
+
+/** Not a loadout place: an idle stance, drawn between moves for looks only (LS-12). */
+const IDLE_PLACE = { key: 'idle', slot: 'taunt', label: 'Idle stance', input: 'Between moves' } as const;
+type Place = (typeof LOADOUT_KEYS)[number] | typeof IDLE_PLACE;
+
+function hintFor(place: Place): string {
+  return place.key === 'idle' ? 'How you bounce between moves (looks only)' : SLOT_HINTS[place.slot];
+}
 const MAX_TAKES = 5;
 
 const SLOT_HINTS: Record<MoveSlot, string> = {
@@ -51,9 +60,12 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   const panel = h('div', { class: 'studio-panel' });
   const el = h('section', { class: 'studio' }, stage, panel);
 
-  let place: (typeof LOADOUT_KEYS)[number] | null = null;
+  let place: Place | null = null;
+  let halfSpeed = false;
   let stream: MediaStream | null = null;
   let tracking: Tracking | null = null;
+  /** The clear-space check, while the camera is open. */
+  let space: SpaceWatch | null = null;
   let facing: CameraFacing = 'user';
   let video: HTMLVideoElement | null = null;
   let overlay: HTMLCanvasElement | null = null;
@@ -106,10 +118,30 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       h('div', { style: 'display:flex;align-items:center;gap:12px' }, back, h('div', null, h('div', { class: 'kicker', text: 'Move Studio' }), h('h2', { text: 'Record a move' }))),
       h('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'Start with light, heavy, low and special. Every capture is fitted to the same body, so nobody gets extra reach.' }),
       grid,
+      idleRow(),
     );
   }
 
-  function choose(key: (typeof LOADOUT_KEYS)[number]): void {
+  function idleRow(): HTMLElement {
+    const stored = settings.idleStance ? library.get(settings.idleStance) : undefined;
+    const record = press(h('button', { class: 'btn btn-small' }, svg(ICON.camera), stored ? 'Re-record' : 'Record'), () => choose(IDLE_PLACE));
+    const reset = stored
+      ? press(h('button', { class: 'btn btn-small btn-ghost' }, 'Use the standard stance'), () => {
+          updateSettings({ idleStance: null });
+          void library.remove(stored.move.id);
+          toast('Back to the standard stance.');
+          showSlots();
+        }, { sound: 'back' })
+      : null;
+    return h(
+      'div',
+      { class: 'card', style: 'padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap' },
+      h('div', { style: 'display:flex;flex-direction:column;gap:2px' }, h('b', { style: 'font:400 20px/1 var(--display);text-transform:uppercase', text: 'Idle stance' }), h('small', { class: 'muted', style: 'font:600 11.5px/1.3 var(--ui)', text: stored ? `Yours: ${stored.move.name}. Looks only.` : 'The standard stance. Record your own bounce; looks only.' })),
+      h('div', { class: 'actions' }, record, reset),
+    );
+  }
+
+  function choose(key: Place): void {
     place = key;
     takes = [];
     current = 0;
@@ -164,10 +196,15 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       if (disposed) return stopCamera();
       tracking = new Tracking(landmarker, video, (frame) => onTracked(frame));
       tracking.start();
+      // Safety: nothing to kick within reach. Paused while recording so tracking stays smooth.
+      space = new SpaceWatch(video, () => (lastFrame ? bodyBox(lastFrame.points) : null), () => recording !== null);
+      space.start();
       renderSetup(null);
     } catch (err) {
       stopCamera();
       const message = err instanceof CameraError ? err.message : 'The body tracker couldn’t load. Check your connection.';
+      const hint = stage.querySelector('.stage-hint span');
+      if (hint) hint.textContent = 'No camera. A demo take still works.';
       renderSetup(null, message);
     }
   }
@@ -175,6 +212,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   function stopCamera(): void {
     tracking?.stop();
     tracking = null;
+    space?.stop();
+    space = null;
     for (const track of stream?.getTracks() ?? []) track.stop();
     stream = null;
   }
@@ -190,17 +229,33 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     if (loading || error) recButton.disabled = true;
     const demo = press(h('button', { class: 'btn btn-small' }, 'Try a demo take'), () => runDemo());
     const back = press(h('button', { class: 'btn btn-icon', attrs: { 'aria-label': 'Back to slots' } }, svg(ICON.back)), () => showSlots(), { sound: 'back' });
+    // Safety: perform at half speed and the game plays it at full speed, within the speed cap.
+    const slow = h('button', { class: `switch${halfSpeed ? ' is-on' : ''}`, attrs: { role: 'switch', 'aria-label': 'Record at half speed', 'aria-checked': String(halfSpeed) } });
+    slow.addEventListener('click', () => {
+      halfSpeed = !halfSpeed;
+      slow.classList.toggle('is-on', halfSpeed);
+      slow.setAttribute('aria-checked', String(halfSpeed));
+      ui.toggle(halfSpeed);
+      seconds.textContent = recordHint();
+    });
+    const seconds = h('div', { class: 'muted', style: 'font:600 12.5px/1.35 var(--ui)', text: recordHint() });
     panel.replaceChildren(
-      h('div', { style: 'display:flex;align-items:center;gap:12px' }, back, h('div', null, h('div', { class: 'kicker', text: `${place.label} · take ${takes.length + 1} of ${MAX_TAKES}` }), h('h2', { text: SLOT_HINTS[place.slot] }))),
+      h('div', { style: 'display:flex;align-items:center;gap:12px' }, back, h('div', null, h('div', { class: 'kicker', text: `${place.label} · take ${takes.length + 1} of ${MAX_TAKES}` }), h('h2', { text: hintFor(place) }))),
       error
         ? h('div', { class: 'card', style: 'padding:12px 14px;background:#ffe5df;font:600 13px/1.4 var(--ui)', text: error })
         : loading
           ? h('div', { class: 'status-line' }, h('i', { class: 'spinner', style: 'border-color:rgba(0,0,0,.15);border-top-color:var(--ink)' }), loading)
           : statusEl,
-      h('div', { class: 'rec-row' }, recButton, h('div', { class: 'muted', style: 'font:600 12.5px/1.35 var(--ui)', text: `Tap record, then perform within ${RECORD_SECONDS} seconds after the countdown.` })),
+      h('div', { class: 'rec-row' }, recButton, seconds),
+      h('div', { class: 'setting', style: 'padding:6px 0' }, h('div', { class: 'setting-text' }, h('span', { class: 'setting-title', text: 'Record at half speed' }), h('span', { class: 'setting-hint', text: 'Safer for kicks and spins; it plays back at full speed' })), slow),
       h('div', { class: 'actions' }, demo, takes.length > 0 ? press(h('button', { class: 'btn btn-small' }, 'Back to takes'), () => showReview()) : null),
     );
     if (!loading && !error) updateStatus();
+  }
+
+  function recordHint(): string {
+    const secs = RECORD_SECONDS * (halfSpeed ? 2 : 1);
+    return halfSpeed ? `Move at half speed. You have ${secs} seconds after the countdown.` : `Tap record, then perform within ${secs} seconds after the countdown.`;
   }
 
   function updateStatus(): void {
@@ -301,6 +356,28 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     const torso = Math.hypot(joints[2 * J.neck] - joints[2 * J.pelvis], joints[2 * J.neck + 1] - joints[2 * J.pelvis + 1]);
     const facingDir = joints[2 * J.lToe] > joints[2 * J.lAnkle] ? 1 : -1;
     drawFigure(ctx, joints, { ink, scale: torso / 0.5, facing: facingDir, alpha: recording ? 0.95 : 0.8, weight: 0.8 });
+    // Anything within reach gets a red outline and a name.
+    if (!recording) {
+      for (const hazard of space?.hazards ?? []) {
+        let x0 = ox + hazard.x0 * vw * scale;
+        let x1 = ox + hazard.x1 * vw * scale;
+        if (mirrored) [x0, x1] = [w - x1, w - x0];
+        const y0 = oy + hazard.y0 * vh * scale;
+        const y1 = oy + hazard.y1 * vh * scale;
+        ctx.strokeStyle = 'rgba(255, 92, 70, 0.95)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 6]);
+        ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+        ctx.setLineDash([]);
+        const label = HAZARDS[hazard.label].replace(/^An? /, '');
+        ctx.font = '800 13px system-ui, sans-serif';
+        const tw = ctx.measureText(label).width + 14;
+        ctx.fillStyle = 'rgba(255, 92, 70, 0.95)';
+        ctx.fillRect(x0, Math.max(0, y0 - 22), tw, 22);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, x0 + 7, Math.max(0, y0 - 22) + 15);
+      }
+    }
   }
 
   function assess(frame: PoseFrame | null): { ok: boolean; text: string; optional?: boolean }[] {
@@ -316,9 +393,19 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     return [
       { ok: whole, text: whole ? 'Whole body in frame' : 'Step back: head and feet in frame' },
       { ok: frame.people <= 1, text: frame.people <= 1 ? 'Just you in frame' : 'Only one person, please' },
+      spaceCheck(),
       { ok: sideOn, text: sideOn ? 'Standing side-on' : 'Turn side-on to the phone', optional: true },
       { ok: avgVis > 0.7, text: avgVis > 0.7 ? 'Good light' : 'A bit dark: add some light', optional: true },
     ];
+  }
+
+  /** The clear-space check as a status line: it blocks recording until nothing is within reach. */
+  function spaceCheck(): { ok: boolean; text: string; optional?: boolean } {
+    if (!space) return { ok: true, text: 'Clear space around you', optional: true };
+    if (space.state === 'loading') return { ok: false, text: 'Checking the space around you…' };
+    if (space.state === 'failed') return { ok: false, optional: true, text: 'Couldn’t check the space: clear an arm’s length yourself' };
+    const hazard = space.hazards[0];
+    return hazard ? { ok: false, text: `${HAZARDS[hazard.label]} is within reach: move it or step away` } : { ok: true, text: 'Clear space around you' };
   }
 
   async function countdown(): Promise<void> {
@@ -351,7 +438,7 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     const started = performance.now();
     await new Promise<void>((resolve) => {
       const tick = () => {
-        const t = (performance.now() - started) / (RECORD_SECONDS * 1000);
+        const t = (performance.now() - started) / (RECORD_SECONDS * (halfSpeed ? 2 : 1) * 1000);
         ring.style.setProperty('--off', String(276 * (1 - Math.min(1, t))));
         if (t >= 1 || !recording) return resolve();
         requestAnimationFrame(tick);
@@ -374,7 +461,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     const art = h('canvas');
     stage.replaceChildren(art, h('div', { class: 'stage-hint' }, h('span', { text: 'Demo take: a default move, tracked as if by the camera, with real jitter.' })));
     const ghost = new MovePreview(art, { ink, background: '#1b1916', floor: 'rgba(255,255,255,0.1)', span: 2.5, outline: 'rgba(255,250,240,0.9)' });
-    const source = defaultMoves()[LOADOUT_KEYS.indexOf(place)];
+    // The idle demo borrows the taunt's motion.
+    const source = defaultMoves()[place.key === 'idle' ? 7 : LOADOUT_KEYS.findIndex((k) => k.key === place!.key)];
     ghost.setMove(source);
     ghost.play();
     panel.replaceChildren(h('div', { class: 'kicker', text: place.label }), h('h2', { text: 'Demo take' }), h('div', { class: 'status-line' }, h('i', { class: 'spinner', style: 'border-color:rgba(0,0,0,.15);border-top-color:var(--ink)' }), 'Get ready…'));
@@ -396,7 +484,7 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       await sleep(110);
     }
     try {
-      const clean = cleanCapture(frames, aspect);
+      const clean = cleanCapture(frames, aspect, { halfSpeed: halfSpeed && !demoMode });
       takes.push({ raw: frames, aspect, clean });
       current = takes.length - 1;
       trim = [...clean.trim];
@@ -417,7 +505,7 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
 
   function buildCurrent(name: string): MoveFile {
     const take = takes[current];
-    const frames = prepareFrames(take.clean, { trim, mirror, speed });
+    const frames = place!.key === 'idle' ? prepareIdle(take.clean, trim) : prepareFrames(take.clean, { trim, mirror, speed });
     const info = analyse(frames, place!.slot);
     const move = withHashSync(encodeMove(frames, info, { id: uuid(), slot: place!.slot, name }));
     return move;
@@ -562,15 +650,22 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       else void startCamera();
     });
     if (takes.length >= MAX_TAKES) retake.disabled = true;
-    const save = press(h('button', { class: 'btn btn-primary' }, svg(ICON.check), 'Save move'), () => void saveMove(), { sound: 'none' });
+    const idle = place.key === 'idle';
+    const save = press(h('button', { class: 'btn btn-primary' }, svg(ICON.check), idle ? 'Save stance' : 'Save move'), () => void saveMove(), { sound: 'none' });
 
     panel.replaceChildren(
       h('div', { style: 'display:flex;align-items:center;gap:12px' }, press(h('button', { class: 'btn btn-icon', attrs: { 'aria-label': 'Back to slots' } }, svg(ICON.back)), () => showSlots(), { sound: 'back' }), h('div', null, h('div', { class: 'kicker', text: `${place.label} · Review` }), h('h2', { text: 'Your stick man' }))),
       h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Takes' }), takeRow),
       h('div', { class: 'field' }, h('div', { style: 'display:flex;justify-content:space-between' }, h('span', { class: 'field-label', text: 'Capture quality' }), h('span', { class: 'kicker', text: `${Math.round(quality * 100)}%` })), meter, tip ? h('span', { class: 'muted', style: 'font-size:12px', text: tip }) : null),
+      h('div', { class: 'status-line' }, h('i', { class: 'light is-good' }), take.clean.corrected > 0 ? `Physics check: fixed ${take.clean.corrected} frames past human limits` : 'Physics check: every joint within human limits'),
       h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Trim' }), trimEl),
-      h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Mirror left and right' }), mirrorSwitch),
-      h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Speed' }), h('div', { style: 'display:flex;align-items:center;gap:8px;flex:1;max-width:200px' }, speedInput, speedLabel)),
+      // An idle stance loops in place: mirror and speed don't apply.
+      ...(idle
+        ? []
+        : [
+            h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Mirror left and right' }), mirrorSwitch),
+            h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Speed' }), h('div', { style: 'display:flex;align-items:center;gap:8px;flex:1;max-width:200px' }, speedInput, speedLabel)),
+          ]),
       h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), nameWrap),
       h('div', { class: 'actions' }, save, retake),
     );
@@ -630,12 +725,19 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       return;
     }
     const take = takes[current];
-    await library.save({ move, createdAt: Date.now(), description: null, quality: take.clean.quality });
-    updateSettings({ loadout: { ...settings.loadout, [place.key]: move.id } });
+    if (place.key === 'idle') {
+      const previous = settings.idleStance;
+      await library.save({ move, createdAt: Date.now(), description: null, quality: take.clean.quality, kind: 'idle' });
+      if (previous && previous !== move.id) void library.remove(previous);
+      updateSettings({ idleStance: move.id });
+    } else {
+      await library.save({ move, createdAt: Date.now(), description: null, quality: take.clean.quality, kind: 'move' });
+      updateSettings({ loadout: { ...settings.loadout, [place.key]: move.id } });
+    }
     ui.stamp();
     haptic('heavy');
     toast(`${move.name} saved to ${place.label}.`, 'good');
-    const key = place.key;
+    const key = place.key === 'idle' ? undefined : place.key;
     place = null;
     showSlots(key);
   }

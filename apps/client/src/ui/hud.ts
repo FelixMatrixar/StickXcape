@@ -2,7 +2,7 @@
  * The thin fight HUD (LS-6): health bars with a trailing white chunk that drains after a hit,
  * the round timer, round dots, and the big announcer text (ROUND 1, FIGHT, K.O.).
  */
-import { MAX_HEALTH, type FightSim } from '../engine/sim.ts';
+import { GUARD_MAX, HEAVY_COST, MAX_HEALTH, S, STAMINA_MAX, type FightSim } from '../engine/sim.ts';
 import type { Ink } from '../render/inks.ts';
 import { h } from './dom.ts';
 
@@ -14,6 +14,9 @@ interface Side {
   dots: HTMLElement[];
   health: number;
   wins: number;
+  stamina: HTMLElement;
+  guard: HTMLElement;
+  meters: number;
 }
 
 export class Hud {
@@ -35,8 +38,11 @@ export class Hud {
       const dots = [h('i'), h('i')];
       const name = h('div', { class: 'hud-name' }, h('span', { text: names[i] }), localSide === i ? h('span', { class: 'you', text: 'YOU' }) : null);
       if (i === 1) name.style.flexDirection = 'row-reverse';
-      const el = h('div', { class: `hud-side ${i === 0 ? 'left' : 'right'}` }, name, bar, h('div', { class: 'hud-dots' }, ...dots));
-      return { el, bar, fill, trail, dots, health: MAX_HEALTH, wins: 0 };
+      // Stamina and guard (CB-7): thin bars under the health bar.
+      const stamina = h('div', { class: 'meter-bar stamina', attrs: { 'aria-label': 'Stamina' } }, h('i', { class: 'meter-fill' }));
+      const guard = h('div', { class: 'meter-bar guard', attrs: { 'aria-label': 'Guard' } }, h('i', { class: 'meter-fill' }));
+      const el = h('div', { class: `hud-side ${i === 0 ? 'left' : 'right'}` }, name, bar, h('div', { class: 'meters' }, stamina, guard), h('div', { class: 'hud-dots' }, ...dots));
+      return { el, bar, fill, trail, dots, health: MAX_HEALTH, wins: 0, stamina, guard, meters: -1 };
     };
     this.sides = [side(0), side(1)];
     this.timer = h('div', { class: 'hud-timer', text: '60' });
@@ -65,6 +71,15 @@ export class Hud {
         side.bar.classList.toggle('is-low', ratio <= 0.25 && ratio > 0);
         side.health = f.health;
       }
+      // Meters change most frames; only touch the DOM when the shown value moves.
+      const key = Math.round(f.stamina / 20) * 10000 + Math.round(f.guard / 20) * 10 + (f.state === S.guardBreak ? 1 : 0);
+      if (key !== side.meters) {
+        side.meters = key;
+        side.stamina.style.setProperty('--v', String(f.stamina / STAMINA_MAX));
+        side.guard.style.setProperty('--v', String(f.guard / GUARD_MAX));
+        side.stamina.classList.toggle('is-low', f.stamina < HEAVY_COST);
+        side.guard.classList.toggle('is-broken', f.state === S.guardBreak);
+      }
       if (f.roundsWon !== side.wins) {
         side.wins = f.roundsWon;
         side.dots.forEach((dot, i) => dot.classList.toggle('is-won', i < side.wins));
@@ -77,6 +92,14 @@ export class Hud {
       this.timer.classList.toggle('is-urgent', seconds <= 10 && sim.phase === 1);
     }
     this.roundLabel.textContent = `Round ${sim.round}`;
+  }
+
+  /** Shakes a meter: out of stamina, or the guard just broke. */
+  pulse(side: number, which: 'stamina' | 'guard'): void {
+    const bar = this.sides[side === 0 ? 0 : 1][which];
+    bar.classList.remove('is-pulse');
+    void bar.offsetWidth;
+    bar.classList.add('is-pulse');
   }
 
   /** Big announcer text that slams in, holds, and flies off. */

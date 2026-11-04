@@ -9,6 +9,7 @@ import { ui } from '../audio/sfx.ts';
 import { PracticeBot } from '../engine/bot.ts';
 import { FightSim, PHASE } from '../engine/sim.ts';
 import { defaultMoves } from '../moves/defaults.ts';
+import { simArena } from '../render/arena-files.ts';
 import { arenaById } from '../render/arenas.ts';
 import { inkById } from '../render/inks.ts';
 import { FightScene } from '../render/scene.ts';
@@ -28,7 +29,7 @@ export function titleScreen(onStart: () => void): Screen {
   const loadout = defaultMoves();
   const arena = arenaById('rooftop');
   let seed = (Math.random() * 1e9) | 0;
-  const makeSim = () => new FightSim({ seed: seed++, arena: { width: arena.file.width, spawns: arena.file.spawns }, loadouts: [loadout, loadout] });
+  const makeSim = () => new FightSim({ seed: seed++, arena: simArena(arena.file), loadouts: [loadout, loadout] });
   let sim = makeSim();
   let bots = [new PracticeBot(0, seed, 'hard'), new PracticeBot(1, seed + 1, 'hard')];
   const scene = new FightScene({ canvas, sim, arena, inks: [inkById('vermillion'), inkById('cobalt')], localSide: null, quiet: true, shake: 0.5, flashes: 0.4 });

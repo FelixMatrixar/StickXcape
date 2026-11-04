@@ -155,6 +155,47 @@ export const fightSound: SceneSound = {
     audio.tone({ type: 'sine', freq: 85 * vary(0.12), to: 38, dur: 0.12 + intensity * 0.1, gain: 0.15 + intensity * 0.35, pan });
     audio.noiseBurst({ filter: 'lowpass', freq: 600, dur: 0.1, gain: 0.06 + intensity * 0.12, pan });
   },
+  grab(pan) {
+    // A cloth snap as the hands close.
+    audio.noiseBurst({ filter: 'bandpass', freq: 1800 * vary(0.1), q: 2.2, dur: 0.045, gain: 0.32, pan });
+    audio.tone({ type: 'sine', freq: 130 * vary(), to: 70, dur: 0.07, gain: 0.3, pan });
+  },
+  slam(pan) {
+    // A body slam: deep thump, crack and a rumble of dust.
+    audio.tone({ type: 'sine', freq: 96 * vary(), to: 30, dur: 0.42, gain: 0.95, pan });
+    audio.noiseBurst({ filter: 'bandpass', freq: 700 * vary(), q: 0.9, dur: 0.16, gain: 0.45, pan, distort: true });
+    audio.noiseBurst({ filter: 'lowpass', freq: 900, to: 140, dur: 0.48, gain: 0.32, pan, reverb: 0.3 });
+    audio.duck(0.5, 0.5);
+  },
+  clash(pan) {
+    audio.tone({ type: 'triangle', freq: 1400 * vary(0.04), dur: 0.09, gain: 0.1, pan });
+    audio.tone({ type: 'triangle', freq: 2100 * vary(0.04), dur: 0.07, gain: 0.07, pan, delay: 0.04 });
+    audio.noiseBurst({ filter: 'highpass', freq: 4000, dur: 0.03, gain: 0.12, pan });
+  },
+  guardBreak(pan) {
+    // Glass giving way: a bright crash, falling pings and a thud.
+    audio.noiseBurst({ filter: 'highpass', freq: 3500, dur: 0.28, gain: 0.32, pan, reverb: 0.4 });
+    audio.noiseBurst({ filter: 'bandpass', freq: 5200, to: 1800, q: 3, dur: 0.35, gain: 0.12, pan, delay: 0.03 });
+    [2600, 2050, 1560].forEach((f, i) => audio.tone({ type: 'sine', freq: f * vary(0.03), to: f * 0.55, dur: 0.22, gain: 0.07, pan, delay: 0.04 + i * 0.06, reverb: 0.4 }));
+    audio.tone({ type: 'sine', freq: 140, to: 60, dur: 0.2, gain: 0.45, pan });
+    audio.duck(0.4, 0.4);
+  },
+  tired(pan) {
+    // Out of breath: two short exhales.
+    audio.noiseBurst({ filter: 'lowpass', freq: 650, to: 300, dur: 0.26, gain: 0.07, attack: 0.07, pan });
+    audio.noiseBurst({ filter: 'lowpass', freq: 600, to: 280, dur: 0.24, gain: 0.06, attack: 0.07, pan, delay: 0.3 });
+  },
+  roll(pan) {
+    audio.noiseBurst({ filter: 'lowpass', freq: 520, dur: 0.26, gain: 0.12, attack: 0.03, pan });
+    audio.tone({ type: 'sine', freq: 90, to: 50, dur: 0.07, gain: 0.12, pan, delay: 0.08 });
+    audio.tone({ type: 'sine', freq: 80, to: 45, dur: 0.07, gain: 0.1, pan, delay: 0.22 });
+  },
+  fall() {
+    // A long falling whoosh, wind, and a far-off landing.
+    audio.noiseBurst({ filter: 'bandpass', freq: 1600, to: 240, q: 1.1, dur: 1.5, gain: 0.22, attack: 0.15 });
+    audio.noiseBurst({ filter: 'highpass', freq: 2400, dur: 1.6, gain: 0.05, attack: 0.3 });
+    audio.tone({ type: 'sine', freq: 70, to: 36, dur: 0.5, gain: 0.22, delay: 1.25, reverb: 0.6 });
+  },
   ko() {
     // Boom, then the music drops out (the fight screen cuts it).
     audio.tone({ type: 'sine', freq: 72, to: 26, dur: 1.6, gain: 1, reverb: 0.4 });
