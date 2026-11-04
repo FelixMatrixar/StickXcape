@@ -25,7 +25,7 @@ The services are everything that runs off the phone. In the MVP they are deliber
 
 ## Progress
 
-Updated 2026-11-04. The code is on `main`, merged with the game client through PR 1; the old `backend-mvp` branch stops before the tests and CI commit. 138 automated tests pass and bots have played matches through the relay locally, but nothing has been tried on phones or deployed yet. No backend code has changed since the frontend work began; later commits only taught the Docker image to serve the game.
+Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from `main` after PR 1 merged the backend with the game client. 138 automated tests pass, live Meta AI calls work, and every CI step passes when run locally, but nothing has been tried on phones or deployed yet.
 
 | Deliverable | Status | Code |
 | --- | --- | --- |
@@ -33,14 +33,14 @@ Updated 2026-11-04. The code is on `main`, merged with the game client through P
 | Web hosting | Tested: serves the web app, invite links, a test page and the relay lab. HTTPS comes from the host or a local tunnel | `services/server/src/web` |
 | Rooms | Tested: create, look up, 8-player cap, host hand-over, empty rooms expire after an hour | `services/server/src/rooms` |
 | Relay | Tested over real WebSockets: lobby, loadout and input passing, ping and input delay, desync and result checks, malformed-message drops, rate cap, input-ahead room close, winner stays on. Bots have played full matches and rematches through it | `services/server/src/relay` |
-| AI gateway | Tested against a stand-in for Meta's API: structured output, reply cleanup, the cache, daily limits, one retry, the 4.5 s budget and the fallbacks. Live Meta calls still need a key | `services/server/src/ai` |
+| AI gateway | Tested against a stand-in for Meta's API (structured output, reply cleanup, the cache, daily limits, one retry, the 4.5 s budget and the fallbacks), and live: 27 calls for names and tips, all with usable replies. It uses Muse Spark 1.1, which answered in 2.3 s (median of 6 calls, slowest 3.0 s). Muse Spark 1.3 took 3.3 s (median of 17, slowest 4.9 s, past the budget) at the same price, and its names and tips were no better. `minimal` is the lowest reasoning level Muse Spark accepts (it rejects `none`), so the server refuses to start with an unknown level | `services/server/src/ai` |
 | Metrics and alert | Tested: Prometheus `/metrics`, an `/admin` dashboard, and an alert when AI errors pass 5% (optional Slack or Discord webhook) | `services/server/src/metrics` |
 | Netcode client | Tested, with two fixes: the driver's first update could skip its frame, and the bad-network simulation could reorder messages | `packages/netcode` |
 | Client mocks | Tested: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
 | Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
 | Relay lab (a toy match between two phones) | Written and tried in a browser against a bot: create a room, share the link, ready, fight, rematch. Shows ping, input delay, time spent waiting and the state checks | `services/server/lab` |
 | Automated tests, bot matches, bad-network and load scripts | Written: 138 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks | `*/test`, `services/server/scripts` |
-| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed: the staging address doesn't answer yet. CI typechecks, tests, plays bot matches and smoke-tests the image on pushes to `main` and on pull requests, so PR 1 should have run it, but its results haven't been checked. Staging deploys by hand. Needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta test key | `Dockerfile`, `fly.toml`, `.github/workflows` |
+| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed yet. `fly.toml` puts staging in Singapore (`sin`), nearest the playtesters. Every CI step passes when run locally on `backend-mvp`: typecheck, 153 tests, build, 50 bot matches, slow-network matches and the image smoke test. GitHub's own CI results haven't been checked. Staging deploys by hand and needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta key | `Dockerfile`, `fly.toml`, `.github/workflows` |
 | Launch services | Not started; they wait for playtests | |
 
 **Bot results so far** (one laptop; the network checks ran inside Docker, on Linux):
@@ -49,7 +49,7 @@ Updated 2026-11-04. The code is on `main`, merged with the game client through P
 - Bad networks, 12 matches at each level with ±20 ms jitter, no desyncs: +50 ms round trip between the phones picked 3 frames and the phones never waited; +100 ms picked 4 to 5 frames and they waited 0.5% of the time; +150 ms picked 6 frames and they never waited.
 - Run these checks in Docker or on Linux. Windows timers tick every 15.6 ms, which stretches the bots' added delays, and Docker Desktop's port forwarding on Windows raised round trips to 40 ms under load. The relay's own hold stayed under 0.2 ms either way.
 
-**Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. For week 2, the relay half is ready to try on two phones with the lab at `/lab/`; live Meta move names need a key. For week 3, CI runs the 50-match and slow-network bot checks, and staging needs the Fly.io setup in `fly.toml`.
+**Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. For week 2, the relay half is ready to try on two phones with the lab at `/lab/`, and live Meta move names arrive in 2 to 3 seconds, inside the 5-second target. For week 3, CI runs the 50-match and slow-network bot checks, and staging needs the Fly.io setup in `fly.toml`.
 
 **Contract details settled in code.** The [Integration PRD](04-integration-prd.md) left these open, so the frontend owner should review them:
 
