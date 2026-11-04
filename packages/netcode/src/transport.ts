@@ -72,13 +72,33 @@ export function connectWebSocket(url: string, options: ConnectOptions = {}): Pro
   });
 }
 
-/** Runs callbacks after a delay without ever reordering them. */
+/**
+ * Runs callbacks after a delay without ever reordering them, like one network link. One timer
+ * for the head of the queue: a timer per message can fire out of order, since timers count from
+ * the event loop's cached clock rather than performance.now().
+ */
 class DelayQueue {
-  private lastAt = 0;
+  private readonly queue: { at: number; callback: () => void }[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
   push(callback: () => void, delayMs: number): void {
-    const at = Math.max(this.lastAt, performance.now() + Math.max(0, delayMs));
-    this.lastAt = at;
-    setTimeout(callback, at - performance.now());
+    const last = this.queue[this.queue.length - 1];
+    const at = Math.max(last?.at ?? 0, performance.now() + Math.max(0, delayMs));
+    this.queue.push({ at, callback });
+    if (this.timer === null) this.schedule();
+  }
+
+  private schedule(): void {
+    const head = this.queue[0];
+    this.timer = head ? setTimeout(() => this.flush(), Math.max(0, head.at - performance.now())) : null;
+  }
+
+  private flush(): void {
+    try {
+      const now = performance.now();
+      while (this.queue.length > 0 && this.queue[0]!.at <= now) this.queue.shift()!.callback();
+    } finally {
+      this.schedule();
+    }
   }
 }

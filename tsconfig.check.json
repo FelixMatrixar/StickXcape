@@ -1,0 +1,16 @@
+{
+  // Typechecks what `tsc -b` doesn't build: tests, scripts and the relay lab. Workspace packages
+  // resolve to their TypeScript sources through the "source" export condition.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "noEmit": true,
+    "customConditions": ["source"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["vitest.config.ts", "packages/*/test", "services/*/test", "services/server/scripts", "services/server/lab"]
+}

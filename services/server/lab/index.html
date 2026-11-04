@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>SticXcape relay lab</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f5f2;
+      --card: #ffffff;
+      --ink: #1d1d1b;
+      --muted: #6b6b66;
+      --line: #e2e0da;
+      --accent: #1d1d1b;
+      --accent-ink: #ffffff;
+      --left: #2457d6;
+      --right: #c4421a;
+      --bad: #b3261e;
+      --good: #1f7a3d;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161614;
+        --card: #22221f;
+        --ink: #ecebe6;
+        --muted: #a09f98;
+        --line: #36362f;
+        --accent: #ecebe6;
+        --accent-ink: #161614;
+        --left: #7aa2ff;
+        --right: #ff8a5c;
+        --bad: #ff6b5b;
+        --good: #5fd08a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); }
+    h1 { font-size: 20px; margin: 0; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    header p { margin: 2px 0 14px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    label.field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; font-size: 13px; color: var(--muted); }
+    input[type='text'] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; width: 100%; }
+    button { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; cursor: pointer; touch-action: manipulation; }
+    button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .invite { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .invite a { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    #players { list-style: none; margin: 10px 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+    #players li { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+    #players li.me { border-color: var(--ink); }
+    #players .tag { color: var(--muted); margin-left: 4px; }
+    #status { margin: 4px 0 10px; min-height: 1.45em; }
+    #status.bad { color: var(--bad); }
+    .check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
+    .stage { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+    canvas { display: block; width: 100%; aspect-ratio: 16 / 7; }
+    .controls { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; user-select: none; -webkit-user-select: none; touch-action: none; }
+    .controls div { display: flex; gap: 10px; }
+    .controls button { min-width: 72px; min-height: 56px; font-size: 18px; font-weight: 600; border-radius: 12px; }
+    .controls button.held { background: var(--accent); color: var(--accent-ink); }
+    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px; }
+    .stats div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+    .stats dt { color: var(--muted); font-size: 12px; }
+    .stats dd { margin: 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .stats dd.good { color: var(--good); }
+    .stats dd.bad { color: var(--bad); }
+    @media (max-width: 480px) { .controls button { min-width: 60px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SticXcape relay lab</h1>
+      <p class="muted small">A toy match between two phones through the relay: walk, jump and jab. It runs the game's netcode with a stand-in fight.</p>
+    </header>
+
+    <section id="home" class="card">
+      <div class="row">
+        <label class="field">Nickname <input type="text" id="nickname" maxlength="16" autocomplete="nickname"></label>
+        <button id="enter" class="primary">Create a room</button>
+      </div>
+      <p id="home-status" class="small muted" role="status"></p>
+    </section>
+
+    <section id="room" class="card" hidden>
+      <div class="invite"><span class="muted small">Invite</span><a id="link"></a><button id="share">Share</button></div>
+      <ul id="players"></ul>
+      <p id="status" role="status"></p>
+      <div class="row">
+        <button id="ready" class="primary" disabled>Ready</button>
+        <label class="check"><input type="checkbox" id="auto"> Let a bot play for me</label>
+      </div>
+    </section>
+
+    <div class="stage"><canvas id="stage" aria-label="The toy fight"></canvas></div>
+
+    <div class="controls" id="controls">
+      <div><button data-button="Left" aria-label="Walk left">◀</button><button data-button="Right" aria-label="Walk right">▶</button></div>
+      <div><button data-button="Up">Jump</button><button data-button="Light">Jab</button></div>
+    </div>
+
+    <dl class="stats">
+      <div><dt>Ping to relay</dt><dd id="s-ping">–</dd></div>
+      <div><dt>Input delay</dt><dd id="s-delay">–</dd></div>
+      <div><dt>Frame</dt><dd id="s-frame">–</dd></div>
+      <div><dt>Waiting for opponent</dt><dd id="s-wait">–</dd></div>
+      <div><dt>State checks</dt><dd id="s-hash">–</dd></div>
+      <div><dt>Result</dt><dd id="s-result">–</dd></div>
+    </dl>
+    <p class="muted small">Keys: ← → or A D to walk, ↑ W or Space to jump, J or Enter to jab. A backgrounded tab stops sending inputs, so the relay ends its match after 15 seconds.</p>
+  </main>
+  <script type="module" src="./lab.js"></script>
+</body>
+</html>

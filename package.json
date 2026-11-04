@@ -9,15 +9,16 @@
     "services/server"
   ],
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.18"
   },
   "scripts": {
-    "build": "tsc -b",
-    "typecheck": "tsc -b",
+    "build": "tsc -b && npm run build:lab -w @sticxcape/server",
+    "typecheck": "tsc -b && tsc -p tsconfig.check.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "npm run dev -w @sticxcape/server",
     "start": "npm run start -w @sticxcape/server",
+    "bots": "node --conditions=source services/server/scripts/bots.ts",
     "clean": "tsc -b --clean"
   },
   "devDependencies": {

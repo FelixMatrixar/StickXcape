@@ -15,3 +15,4 @@ export {
   type ServicesOptions,
 } from './services.ts';
 export { ToySim } from './toy-sim.ts';
+export { ToyMatch, toyBotInput, toyLoadout, type ToyMatchOptions } from './toy-match.ts';

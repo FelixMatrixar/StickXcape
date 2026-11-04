@@ -176,6 +176,7 @@ export class Relay {
     conn.addRtt(rtt);
     this.options.metrics.relayRtt.observe(rtt / 1000);
     this.options.metrics.samples.rttMs.push(rtt);
+    conn.hub?.rttMeasured();
   }
 
   private onClose(conn: Connection): void {
