@@ -714,7 +714,7 @@ export function photoArenaArts(): ArenaArt[] {
   return [...photos.values()];
 }
 
-/** Official arenas ship with the game; only these go to online rooms until arena sharing is live. */
+/** Official arenas ship with the game; any other arena is a photo arena, shared before a room uses it. */
 export function isOfficialArena(id: string | null | undefined): boolean {
   return (ARENA_IDS as readonly string[]).includes(id ?? '');
 }
