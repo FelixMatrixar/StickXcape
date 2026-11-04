@@ -123,6 +123,9 @@ const ROLL_INVULN = 28;
 const RINGOUT_FRAMES = 200;
 const FALL_LIMIT = toFixed(-30);
 const NO_LIMIT = toFixed(100);
+// Ledges (AR-6): solid blocks you can stand on. A fighter's centre keeps this far from a ledge's
+// side; standing on top counts this far past either end, so stepping off never jumps sideways.
+const LEDGE_MARGIN = toFixed(0.12);
 
 export interface MoveStat {
   uses: number;
@@ -161,10 +164,10 @@ export type SimEvent =
   | { type: 'armor'; side: number; x: number; y: number }
   | { type: 'whiff'; side: number; move: number; near: boolean }
   | { type: 'parryWhiff'; side: number }
-  | { type: 'jump'; side: number; x: number }
-  | { type: 'land'; side: number; x: number; hard: boolean }
-  | { type: 'dash'; side: number; dir: number; x: number }
-  | { type: 'knockdown'; side: number; x: number }
+  | { type: 'jump'; side: number; x: number; y: number }
+  | { type: 'land'; side: number; x: number; y: number; hard: boolean }
+  | { type: 'dash'; side: number; dir: number; x: number; y: number }
+  | { type: 'knockdown'; side: number; x: number; y: number }
   | { type: 'ko'; side: number; x: number; y: number; vx: number; vy: number }
   | { type: 'tick'; seconds: number }
   | { type: 'timeup' }
@@ -173,7 +176,7 @@ export type SimEvent =
   | { type: 'clash'; x: number; y: number }
   | { type: 'guardBreak'; side: number; x: number; y: number }
   | { type: 'tired'; side: number }
-  | { type: 'roll'; side: number; dir: number; x: number }
+  | { type: 'roll'; side: number; dir: number; x: number; y: number }
   | { type: 'ringout'; side: number; x: number }
   | { type: 'roundEnd'; winner: number | null; reason: 'ko' | 'time' | 'ringout' }
   | { type: 'matchEnd'; winner: number | null };
@@ -236,6 +239,8 @@ export class Fighter {
   rollDir = 0;
   /** Off a drop edge with no floor below: falling out of the arena. */
   falling = 0;
+  /** Height of what the fighter stands on: 0 for the floor, a ledge's top, or 0 while airborne. */
+  floor = 0;
   /** The pose shown this frame, the pose a blend started from, and the blend's progress. */
   readonly pose = createPose();
   readonly from = createPose();
@@ -283,6 +288,15 @@ export interface SimArena {
   spawns: [number, number];
   /** Drop edges allow ring-outs; walls stop fighters. Walls when left out. */
   edges?: { left: 'wall' | 'drop'; right: 'wall' | 'drop' };
+  /** Ledges (AR-6): solid blocks from the floor up to y, starting at x. Stand on top; the sides stop you. */
+  ledges?: readonly { x: number; y: number; width: number }[];
+}
+
+/** A ledge in simulation units, Q16.16 m. */
+export interface Ledge {
+  x0: number;
+  x1: number;
+  top: number;
 }
 
 export interface SimOptions {
@@ -326,6 +340,7 @@ export class FightSim {
   readonly rng: Rng;
   readonly dropLeft: boolean;
   readonly dropRight: boolean;
+  readonly ledges: readonly Ledge[];
   /** The side that fell out of the arena this round, or -1. */
   ringoutSide = -1;
   /** Events from the last step, for the renderer, sound and stats. */
@@ -350,6 +365,7 @@ export class FightSim {
     this.spawns = [toFixed(options.arena.spawns[0]), toFixed(options.arena.spawns[1])];
     this.dropLeft = options.arena.edges?.left === 'drop';
     this.dropRight = options.arena.edges?.right === 'drop';
+    this.ledges = (options.arena.ledges ?? []).map((l) => ({ x0: toFixed(l.x), x1: toFixed(l.x + l.width), top: toFixed(l.y) }));
     this.fighters = [new Fighter(0, options.loadouts[0]), new Fighter(1, options.loadouts[1])];
     this.resetRound();
   }
@@ -415,7 +431,7 @@ export class FightSim {
       values.push(
         f.x, f.y, f.vx, f.vy, f.facing, f.state, f.stateT, f.stun, f.move, f.moveT, f.moveHit, f.moveRootX, f.armor, f.cancel,
         f.health, f.parryT, f.combo, f.invuln, f.buffer, f.bufferT, f.crouch, f.walk, f.walkPhase, f.roundsWon, f.blendT, f.blendLen,
-        f.stamina, f.staminaWait, f.guard, f.guardWait, f.rollDir, f.falling,
+        f.stamina, f.staminaWait, f.guard, f.guardWait, f.rollDir, f.falling, f.floor,
       );
       for (let i = 0; i < POSE_SIZE; i++) values.push(f.pose[i]);
     }
@@ -460,6 +476,7 @@ export class FightSim {
       f.guardWait = 0;
       f.rollDir = 0;
       f.falling = 0;
+      f.floor = 0;
       stancePose(f.pose, 0);
       f.from.set(f.pose);
       f.blendT = 0;
@@ -697,7 +714,7 @@ export class FightSim {
           this.setState(f, S.dash, dir > 0 ? DASH_FRAMES : BACKDASH_FRAMES, 2);
           f.jumpDir = dir;
           f.vx = f.facing * dir * (dir > 0 ? DASH_SPEED : BACKDASH_SPEED);
-          this.events.push({ type: 'dash', side: f.side, dir, x: f.x });
+          this.events.push({ type: 'dash', side: f.side, dir, x: f.x, y: f.floor });
           return;
         }
         const crouch = B & Button.Down ? 1 : 0;
@@ -712,9 +729,9 @@ export class FightSim {
         if (f.stun === 0) {
           f.vy = JUMP_V;
           f.vx = f.facing * f.jumpDir * JUMP_VX;
-          f.y = 1;
+          this.events.push({ type: 'jump', side: f.side, x: f.x, y: f.floor });
+          this.takeOff(f);
           this.setState(f, S.air, 0, 3);
-          this.events.push({ type: 'jump', side: f.side, x: f.x });
         }
         return;
       case S.land:
@@ -765,7 +782,7 @@ export class FightSim {
             this.setState(f, S.roll, ROLL_FRAMES, 3);
             f.rollDir = dir;
             f.invuln = ROLL_INVULN;
-            this.events.push({ type: 'roll', side: f.side, dir, x: f.x });
+            this.events.push({ type: 'roll', side: f.side, dir, x: f.x, y: f.floor });
           } else {
             this.setState(f, S.getup, GETUP_FRAMES, 0);
             f.invuln = GETUP_INVULN;
@@ -789,6 +806,7 @@ export class FightSim {
   }
 
   private physics(f: Fighter, other: Fighter): void {
+    const fromX = f.x;
     switch (f.state) {
       case S.idle:
         if (f.walk !== 0) {
@@ -801,14 +819,22 @@ export class FightSim {
       case S.air:
       case S.launched:
       case S.ko:
-        if (f.y > 0 || f.vy > 0 || f.falling) {
+        if (f.y > f.floor || f.vy > 0 || f.falling) {
+          const fromY = f.y;
           f.vy -= GRAVITY;
           f.x += f.vx;
           f.y = Math.max(FALL_LIMIT, f.y + f.vy);
           f.vx = fixedMul(f.vx, AIR_DRAG);
-          if (f.y <= 0) {
+          const top = f.falling ? -1 : this.ledgeBelow(f, fromY);
+          if (top >= 0) {
+            f.floor = top;
+            this.landed(f);
+          } else if (f.y <= 0) {
             if (this.offEdge(f)) this.startFalling(f);
-            else if (!f.falling) this.landed(f);
+            else if (!f.falling) {
+              f.floor = 0;
+              this.landed(f);
+            }
           }
         } else {
           f.x += f.vx;
@@ -840,8 +866,10 @@ export class FightSim {
         f.vx = fixedMul(f.vx, FRICTION);
     }
     if (f.vx !== 0 && Math.abs(f.vx) < 64) f.vx = 0;
-    const [lo, hi] = this.limits(f);
+    const [lo, hi] = this.limits(f, fromX, true);
     f.x = clamp(f.x, lo, hi);
+    // Walked, dashed or got knocked off the end of a ledge: nothing underfoot now.
+    if (f.floor > 0 && f.state !== S.thrown && !this.onLedge(f)) this.stepOff(f);
     // Slid off a drop edge: no floor, so down they go.
     if (!f.falling && f.y <= 0 && this.offEdge(f)) {
       if (f.state !== S.ko) this.setState(f, S.launched, 0, 3);
@@ -850,12 +878,63 @@ export class FightSim {
     }
   }
 
-  /** Fighters moving on purpose stop at the edge; only being hit or thrown can carry someone off a drop. */
-  private limits(f: Fighter): [number, number] {
-    const pushed = PUSHED.has(f.state) || f.falling === 1;
-    const lo = this.dropLeft && pushed ? -NO_LIMIT : WALL;
-    const hi = this.dropRight && pushed ? this.arenaWidth + NO_LIMIT : this.arenaWidth - WALL;
-    return [lo, hi];
+  /**
+   * How far a fighter may move this frame. Fighters moving on purpose stop at the edge; only being
+   * hit or thrown can carry someone off a drop. A ledge's sides are walls to anyone below its top,
+   * judged by which side they started the frame on, and moves and rolls stop at the end of the
+   * ledge they stand on.
+   */
+  private limits(f: Fighter, fromX: number, dropsOpen: boolean): [number, number] {
+    const pushed = dropsOpen && (PUSHED.has(f.state) || f.falling === 1);
+    let lo = this.dropLeft && pushed ? -NO_LIMIT : WALL;
+    let hi = this.dropRight && pushed ? this.arenaWidth + NO_LIMIT : this.arenaWidth - WALL;
+    for (const ledge of this.ledges) {
+      if (f.floor === ledge.top && f.floor > 0 && fromX >= ledge.x0 - LEDGE_MARGIN && fromX <= ledge.x1 + LEDGE_MARGIN) {
+        if (STAY_ON_LEDGE.has(f.state)) {
+          lo = Math.max(lo, ledge.x0);
+          hi = Math.min(hi, ledge.x1);
+        }
+        continue;
+      }
+      if (f.y >= ledge.top) continue;
+      if (fromX < (ledge.x0 + ledge.x1) >> 1) hi = Math.min(hi, ledge.x0 - LEDGE_MARGIN);
+      else lo = Math.max(lo, ledge.x1 + LEDGE_MARGIN);
+    }
+    return [lo, Math.max(lo, hi)];
+  }
+
+  /** The top of the highest ledge a falling fighter came down on this frame, or -1. */
+  private ledgeBelow(f: Fighter, fromY: number): number {
+    if (f.vy > 0) return -1;
+    let best = -1;
+    for (const ledge of this.ledges) {
+      if (fromY >= ledge.top && f.y <= ledge.top && f.x >= ledge.x0 - LEDGE_MARGIN && f.x <= ledge.x1 + LEDGE_MARGIN && ledge.top > best) best = ledge.top;
+    }
+    return best;
+  }
+
+  /** Still standing on the ledge at the fighter's floor height. */
+  private onLedge(f: Fighter): boolean {
+    for (const ledge of this.ledges) {
+      if (ledge.top === f.floor && f.x >= ledge.x0 - LEDGE_MARGIN && f.x <= ledge.x1 + LEDGE_MARGIN) return true;
+    }
+    return false;
+  }
+
+  /** Off the end of a ledge: a hit carries on as a launch, anything else just drops. */
+  private stepOff(f: Fighter): void {
+    this.takeOff(f);
+    f.vy = 0;
+    if (f.state === S.air || f.state === S.launched || f.state === S.ko) return;
+    const knocked = f.state === S.hitstun || f.state === S.stagger || f.state === S.guardBreak || f.state === S.knockdown;
+    this.setState(f, knocked ? S.launched : S.air, 0, 4);
+    f.jumpDir = 0;
+  }
+
+  /** Leaves the ground or a ledge: airborne until landing on whatever is below. */
+  private takeOff(f: Fighter): void {
+    f.y = Math.max(f.y, f.floor + 1);
+    f.floor = 0;
   }
 
   private offEdge(f: Fighter): boolean {
@@ -892,28 +971,30 @@ export class FightSim {
       height = fixedMul(toFixed(0.75), ONE - fixedMul(u, u));
     }
     t.x = a.x + a.facing * dist;
-    t.y = Math.max(0, height);
+    t.floor = a.floor;
+    t.y = a.floor + Math.max(0, height);
     t.vx = 0;
     t.vy = 0;
   }
 
+  /** Touched down on the floor or a ledge; `f.floor` already holds its height. */
   private landed(f: Fighter): void {
     const speed = -f.vy;
-    f.y = 0;
+    f.y = f.floor;
     f.vy = 0;
     if (f.state === S.air) {
       const hard = speed > toFixed(0.09);
       this.setState(f, S.land, hard ? LAND_HARD_FRAMES : LAND_FRAMES, 2);
       f.vx = 0;
-      this.events.push({ type: 'land', side: f.side, x: f.x, hard });
+      this.events.push({ type: 'land', side: f.side, x: f.x, y: f.floor, hard });
     } else if (f.state === S.launched) {
       this.setState(f, S.knockdown, KNOCKDOWN_FRAMES, 4);
       f.vx = idiv(f.vx, 2);
-      this.events.push({ type: 'knockdown', side: f.side, x: f.x });
-      this.events.push({ type: 'land', side: f.side, x: f.x, hard: true });
+      this.events.push({ type: 'knockdown', side: f.side, x: f.x, y: f.floor });
+      this.events.push({ type: 'land', side: f.side, x: f.x, y: f.floor, hard: true });
     } else {
       f.vx = idiv(f.vx, 2);
-      this.events.push({ type: 'land', side: f.side, x: f.x, hard: true });
+      this.events.push({ type: 'land', side: f.side, x: f.x, y: f.floor, hard: true });
     }
   }
 
@@ -928,17 +1009,18 @@ export class FightSim {
     if (overlap <= 0) return;
     const dir = gap > 0 ? 1 : gap < 0 ? -1 : a.facing;
     const half = overlap >> 1;
+    // Walls, drop edges and ledge sides all hold here: a shove never pushes anyone out of the arena or into a ledge.
+    const [aLo, aHi] = this.limits(a, a.x, false);
+    const [bLo, bHi] = this.limits(b, b.x, false);
     a.x -= dir * half;
     b.x += dir * (overlap - half);
-    const minX = WALL;
-    const maxX = this.arenaWidth - WALL;
-    if (a.x < minX || a.x > maxX) {
-      const fix = clamp(a.x, minX, maxX) - a.x;
+    if (a.x < aLo || a.x > aHi) {
+      const fix = clamp(a.x, aLo, aHi) - a.x;
       a.x += fix;
       b.x += fix;
     }
-    if (b.x < minX || b.x > maxX) {
-      const fix = clamp(b.x, minX, maxX) - b.x;
+    if (b.x < bLo || b.x > bHi) {
+      const fix = clamp(b.x, bLo, bHi) - b.x;
       b.x += fix;
       a.x += fix;
     }
@@ -1030,7 +1112,7 @@ export class FightSim {
         lying = true;
         break;
       case S.ko:
-        if (f.y > 0 || f.falling) builtinPose(out, P.launched, t);
+        if (f.y > f.floor || f.falling) builtinPose(out, P.launched, t);
         else {
           builtinPose(out, P.koDown, t);
           lying = true;
@@ -1047,10 +1129,10 @@ export class FightSim {
       f.pose.set(out);
     }
 
-    // Never let the body sink into the floor.
+    // Never let the body sink into the floor or the ledge underfoot.
     if (!f.falling) {
       const low = lying ? lowestPoint(f.pose) : lowestFoot(f.pose);
-      if (f.y + f.pose[ROOT_Y] + low < 0) f.pose[ROOT_Y] = -low - f.y;
+      if (f.y + f.pose[ROOT_Y] + low < f.floor) f.pose[ROOT_Y] = f.floor - low - f.y;
     }
     this.place(f);
   }
@@ -1232,7 +1314,7 @@ export class FightSim {
       dx = a.facing * COS70;
       dy = dy < 0 ? -SIN70 : SIN70;
     }
-    const grounded = t.y <= 0 && t.state !== S.air;
+    const grounded = t.y <= t.floor && t.state !== S.air;
     if (grounded && dy < 0) dy = 0;
     if (rules.strength === 0) dy = Math.min(dy, toFixed(0.25));
     const norm = fixedLength(dx, dy);
@@ -1276,7 +1358,7 @@ export class FightSim {
       this.setState(t, S.launched, 0, 2);
       t.vx = fixedMul(dx, speed);
       t.vy = Math.max(toFixed(0.045), fixedMul(fixedMul(dy, speed), LAUNCH_LIFT) + toFixed(0.03));
-      t.y = Math.max(t.y, 1);
+      this.takeOff(t);
       return;
     }
     const stun = Math.max(8, rules.hitstun - 2 * (t.combo - 1));
@@ -1291,7 +1373,7 @@ export class FightSim {
     const vx = fixedMul(dx, KO_SPEED);
     t.vx = Math.abs(vx) < toFixed(0.08) ? a.facing * toFixed(0.08) : vx;
     t.vy = Math.max(KO_LIFT, fixedMul(Math.max(0, dy), KO_SPEED));
-    t.y = Math.max(t.y, 1);
+    this.takeOff(t);
     this.hitstop = 20;
     this.events.push({ type: 'ko', side: t.side, x: hit.px, y: hit.py, vx: t.vx, vy: t.vy });
   }
@@ -1307,7 +1389,7 @@ export class FightSim {
         f.vx = -f.facing * toFixed(0.06);
       }
       this.hitstop = 6;
-      this.events.push({ type: 'clash', x: (a.x + b.x) >> 1, y: toFixed(1.2) });
+      this.events.push({ type: 'clash', x: (a.x + b.x) >> 1, y: a.floor + toFixed(1.2) });
       return;
     }
     if (ca) this.catch(a, b);
@@ -1317,7 +1399,7 @@ export class FightSim {
   /** Strikes beat grabs (nobody is caught mid-swing); grabs beat blocks and parries. */
   private canCatch(f: Fighter, t: Fighter): boolean {
     if (f.state !== S.grab || f.stateT < GRAB_STARTUP || f.stateT >= GRAB_STARTUP + GRAB_ACTIVE) return false;
-    if (Math.abs(t.x - f.x) > GRAB_RANGE || t.y > 0 || f.y > 0 || t.invuln > 0 || t.falling) return false;
+    if (Math.abs(t.x - f.x) > GRAB_RANGE || t.y > t.floor || f.y > f.floor || t.floor !== f.floor || t.invuln > 0 || t.falling) return false;
     switch (t.state) {
       case S.idle:
       case S.block:
@@ -1349,29 +1431,31 @@ export class FightSim {
     f.vx = 0;
     t.vx = 0;
     this.hitstop = 4;
-    this.events.push({ type: 'grab', side: f.side, target: t.side, x: (f.x + t.x) >> 1, y: toFixed(1.1) });
+    this.events.push({ type: 'grab', side: f.side, target: t.side, x: (f.x + t.x) >> 1, y: f.floor + toFixed(1.1) });
   }
 
   private slam(a: Fighter, t: Fighter): void {
     t.health = Math.max(0, t.health - THROW_DAMAGE);
     t.damageTaken += THROW_DAMAGE;
     a.damageDealt += THROW_DAMAGE;
-    t.y = 0;
+    // Slammed onto whatever the thrower stands on; off the end of a ledge, they drop from there.
+    t.floor = a.floor;
+    t.y = a.floor;
     const ko = t.health === 0;
-    this.events.push({ type: 'throw', side: a.side, target: t.side, x: t.x, y: toFixed(0.15), damage: THROW_DAMAGE, ko });
+    this.events.push({ type: 'throw', side: a.side, target: t.side, x: t.x, y: t.floor + toFixed(0.15), damage: THROW_DAMAGE, ko });
     if (ko) {
       this.setState(t, S.ko, 0, 1);
       t.vx = a.facing * toFixed(0.11);
       t.vy = toFixed(0.06);
-      t.y = 1;
+      this.events.push({ type: 'ko', side: t.side, x: t.x, y: t.floor + toFixed(0.3), vx: t.vx, vy: t.vy });
+      this.takeOff(t);
       this.hitstop = 20;
-      this.events.push({ type: 'ko', side: t.side, x: t.x, y: toFixed(0.3), vx: t.vx, vy: t.vy });
       return;
     }
     this.hitstop = 9;
     this.setState(t, S.knockdown, KNOCKDOWN_FRAMES, 2);
     t.vx = a.facing * toFixed(0.05);
-    this.events.push({ type: 'knockdown', side: t.side, x: t.x });
+    this.events.push({ type: 'knockdown', side: t.side, x: t.x, y: t.floor });
   }
 
   private meters(f: Fighter): void {
@@ -1399,8 +1483,15 @@ export class FightSim {
     this.events.push({ type: 'guardBreak', side: f.side, x: f.world[2 * J.neck], y: f.world[2 * J.neck + 1] });
   }
 
+  /** Pinned against a wall or a ledge's side, so pushback goes to the attacker instead. */
   private nearWall(f: Fighter): boolean {
-    return f.x <= WALL + toFixed(0.25) || f.x >= this.arenaWidth - WALL - toFixed(0.25);
+    const near = toFixed(0.25);
+    if (f.x <= WALL + near || f.x >= this.arenaWidth - WALL - near) return true;
+    for (const ledge of this.ledges) {
+      if (f.y >= ledge.top) continue;
+      if (Math.abs(f.x - (ledge.x0 - LEDGE_MARGIN)) <= near || Math.abs(f.x - (ledge.x1 + LEDGE_MARGIN)) <= near) return true;
+    }
+    return false;
   }
 
   private post(f: Fighter, live: boolean): void {
@@ -1461,6 +1552,8 @@ export class FightSim {
 const PUSHED = new Set<number>([S.hitstun, S.launched, S.blockstun, S.stagger, S.knockdown, S.ko, S.thrown, S.guardBreak]);
 /** States that pass through the other fighter instead of pushing. */
 const NO_PUSH = new Set<number>([S.roll, S.thrown, S.throw]);
+/** On a ledge, these stop at its end (like a move's root motion); walking, dashing and being hit can carry you off. */
+const STAY_ON_LEDGE = new Set<number>([S.attack, S.roll, S.getup, S.land, S.jumpsquat, S.grab, S.throw, S.victory]);
 
 /** Distance from point p to segment ab; out receives the closest point and t (0..ONE). */
 function closest(px: number, py: number, ax: number, ay: number, bx: number, by: number, out: Int32Array): number {

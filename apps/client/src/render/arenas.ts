@@ -253,6 +253,7 @@ function rooftop(): ArenaArt {
       }
       drawLayer(ctx, cam, near);
       drawFloor(ctx, cam, 3.2, '#3b2f3b', '#221a23', 'rgba(255, 214, 190, 0.2)', 'rgba(20, 12, 20, 0.35)', t, 'seams', [0, ARENA_FILES.rooftop.width]);
+      for (const ledge of ARENA_FILES.rooftop.ledges) drawAcUnit(ctx, cam, ledge.x, ledge.x + ledge.width, ledge.y, t);
     },
     drawFront(ctx, cam) {
       // A soft dusk haze at the bottom edge.
@@ -440,6 +441,121 @@ function dojo(): ArenaArt {
       }
     },
   };
+}
+
+/** Depths a ledge box spans: in front of and behind the fight plane, so fighters stand on its top. */
+const BOX_FRONT = -0.5;
+const BOX_BACK = 0.85;
+
+/**
+ * An air-conditioning unit: a ledge (AR-6) drawn as a box through the fight plane. The side
+ * facing the camera shows, the top catches the dusk light, and the fan turns.
+ */
+function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number, x1: number, top: number, t: number): void {
+  const quad = (pts: [number, number, number][]) => {
+    ctx.beginPath();
+    pts.forEach(([x, y, d], i) => (i === 0 ? ctx.moveTo(cam.sx(x, d), cam.sy(y, d)) : ctx.lineTo(cam.sx(x, d), cam.sy(y, d))));
+    ctx.closePath();
+  };
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(24, 16, 26, 0.75)';
+  ctx.lineWidth = Math.max(1, cam.ppm * 0.012);
+  // Contact shadow on the roof.
+  ctx.fillStyle = 'rgba(16, 10, 18, 0.35)';
+  quad([
+    [x0 - 0.08, 0, BOX_FRONT - 0.12],
+    [x1 + 0.08, 0, BOX_FRONT - 0.12],
+    [x1 + 0.08, 0, BOX_BACK],
+    [x0 - 0.08, 0, BOX_BACK],
+  ]);
+  ctx.fill();
+  // The side that faces the camera.
+  const side = cam.x < x0 ? x0 : cam.x > x1 ? x1 : null;
+  if (side !== null) {
+    ctx.fillStyle = '#35293a';
+    quad([
+      [side, 0, BOX_FRONT],
+      [side, 0, BOX_BACK],
+      [side, top, BOX_BACK],
+      [side, top, BOX_FRONT],
+    ]);
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Top: lit from the sky, brightest along the front edge.
+  const topFront = cam.sy(top, BOX_FRONT);
+  const topBack = cam.sy(top, BOX_BACK);
+  const lit = ctx.createLinearGradient(0, topBack, 0, topFront);
+  lit.addColorStop(0, '#7a6578');
+  lit.addColorStop(1, '#9a8296');
+  ctx.fillStyle = lit;
+  quad([
+    [x0, top, BOX_FRONT],
+    [x1, top, BOX_FRONT],
+    [x1, top, BOX_BACK],
+    [x0, top, BOX_BACK],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+  // Front face.
+  const fy0 = cam.sy(top, BOX_FRONT);
+  const fy1 = cam.sy(0, BOX_FRONT);
+  const body = ctx.createLinearGradient(0, fy0, 0, fy1);
+  body.addColorStop(0, '#68546a');
+  body.addColorStop(1, '#423445');
+  ctx.fillStyle = body;
+  quad([
+    [x0, 0, BOX_FRONT],
+    [x1, 0, BOX_FRONT],
+    [x1, top, BOX_FRONT],
+    [x0, top, BOX_FRONT],
+  ]);
+  ctx.fill();
+  ctx.stroke();
+  const k = cam.k(BOX_FRONT);
+  const w = x1 - x0;
+  // Vent slats on the left, a fan on the right.
+  ctx.strokeStyle = 'rgba(28, 20, 30, 0.7)';
+  ctx.lineWidth = Math.max(1, k * 0.018);
+  ctx.beginPath();
+  for (let i = 1; i <= 4; i++) {
+    const y = cam.sy((top * i) / 5, BOX_FRONT);
+    ctx.moveTo(cam.sx(x0 + 0.08, BOX_FRONT), y);
+    ctx.lineTo(cam.sx(x0 + w * 0.4, BOX_FRONT), y);
+  }
+  ctx.stroke();
+  const fx = cam.sx(x0 + w * 0.7, BOX_FRONT);
+  const fy = cam.sy(top * 0.5, BOX_FRONT);
+  const r = top * 0.36 * k;
+  ctx.fillStyle = '#2a2030';
+  ctx.beginPath();
+  ctx.arc(fx, fy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#5a485b';
+  for (let i = 0; i < 4; i++) {
+    const a = t * 6 + (i * Math.PI) / 2;
+    ctx.beginPath();
+    ctx.ellipse(fx + Math.cos(a) * r * 0.48, fy + Math.sin(a) * r * 0.48, r * 0.42, r * 0.16, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#7d6a7c';
+  ctx.beginPath();
+  ctx.arc(fx, fy, r * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#7d6a7c';
+  ctx.lineWidth = Math.max(1, k * 0.022);
+  ctx.beginPath();
+  ctx.arc(fx, fy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  // Rim light along the top front edge, so the standing surface reads clearly.
+  ctx.strokeStyle = 'rgba(255, 222, 200, 0.55)';
+  ctx.lineWidth = Math.max(1.5, k * 0.02);
+  ctx.beginPath();
+  ctx.moveTo(cam.sx(x0, BOX_FRONT), topFront);
+  ctx.lineTo(cam.sx(x1, BOX_FRONT), topFront);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** A perspective floor from the horizon down to the bottom of the screen. */

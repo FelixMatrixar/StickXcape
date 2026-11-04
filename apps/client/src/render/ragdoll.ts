@@ -16,10 +16,12 @@ export class Ragdoll {
   arenaWidth = 10;
   dropLeft = false;
   dropRight = false;
+  /** Solid ledges (AR-6), metres: land on the top, bounce off the sides. */
+  ledges: readonly { x0: number; x1: number; top: number }[] = [];
   /** Fell past a drop edge: no floor any more. */
   private fallen = false;
-  /** Called when a point hits the floor hard, with the impact speed (m/s). */
-  onImpact: ((speed: number, x: number) => void) | null = null;
+  /** Called when a point hits the floor or a ledge hard, with the impact speed (m/s) and where. */
+  onImpact: ((speed: number, x: number, y: number) => void) | null = null;
   private impactCooldown = 0;
   settled = 0;
 
@@ -98,16 +100,20 @@ export class Ragdoll {
       const radius = j === J.head ? 0.11 : 0.03;
       const x = p[2 * j];
       const overFloor = !this.fallen && !(this.dropLeft && x < 0) && !(this.dropRight && x > this.arenaWidth);
-      if (overFloor && p[2 * j + 1] < radius) {
-        const vy = (p[2 * j + 1] - q[2 * j + 1]) / SUBSTEP;
-        if (vy < -2.5 && this.impactCooldown <= 0 && this.onImpact) {
-          this.impactCooldown = 0.12;
-          this.onImpact(-vy, p[2 * j]);
+      if (overFloor && p[2 * j + 1] < radius) this.land(j, 0, radius);
+      for (const ledge of this.ledges) {
+        const px = p[2 * j];
+        const py = p[2 * j + 1];
+        if (px <= ledge.x0 - radius || px >= ledge.x1 + radius || py >= ledge.top + radius) continue;
+        if (q[2 * j + 1] >= ledge.top + radius - 0.02) {
+          // Came down on top.
+          this.land(j, ledge.top, radius);
+        } else {
+          // Hit a side: out the way it came, losing most of the sideways speed.
+          const left = q[2 * j] < (ledge.x0 + ledge.x1) / 2;
+          p[2 * j] = left ? ledge.x0 - radius : ledge.x1 + radius;
+          q[2 * j] = p[2 * j] + (p[2 * j] - q[2 * j]) * 0.3;
         }
-        p[2 * j + 1] = radius;
-        // Bounce a little (a quarter of the speed, upward) and slide with friction.
-        q[2 * j + 1] = p[2 * j + 1] + Math.min(0, vy) * SUBSTEP * 0.25;
-        q[2 * j] = p[2 * j] - (p[2 * j] - q[2 * j]) * 0.82;
       }
       if (!this.dropLeft && p[2 * j] < 0.15) {
         p[2 * j] = 0.15;
@@ -117,6 +123,21 @@ export class Ragdoll {
         q[2 * j] = p[2 * j] + (p[2 * j] - q[2 * j]) * 0.3;
       }
     }
+  }
+
+  /** A point touched a surface at height `top` from above: stop it there, bounce a little and slide with friction. */
+  private land(j: number, top: number, radius: number): void {
+    const p = this.pos;
+    const q = this.prev;
+    const vy = (p[2 * j + 1] - q[2 * j + 1]) / SUBSTEP;
+    if (vy < -2.5 && this.impactCooldown <= 0 && this.onImpact) {
+      this.impactCooldown = 0.12;
+      this.onImpact(-vy, p[2 * j], top);
+    }
+    p[2 * j + 1] = top + radius;
+    // Bounce a little (a quarter of the speed, upward) and slide with friction.
+    q[2 * j + 1] = p[2 * j + 1] + Math.min(0, vy) * SUBSTEP * 0.25;
+    q[2 * j] = p[2 * j] - (p[2 * j] - q[2 * j]) * 0.82;
   }
 
   /** Centre of the body, for the camera. */

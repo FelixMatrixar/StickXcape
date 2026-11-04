@@ -6,7 +6,7 @@
 import { ARENA_FORMAT_VERSION, type ArenaFile } from '@sticxcape/shared';
 import type { SimArena } from '../engine/sim.ts';
 
-function arenaFile(id: string, name: string, edges: ArenaFile['edges']): ArenaFile {
+function arenaFile(id: string, name: string, edges: ArenaFile['edges'], ledges: ArenaFile['ledges'] = []): ArenaFile {
   return {
     id,
     version: ARENA_FORMAT_VERSION,
@@ -15,14 +15,18 @@ function arenaFile(id: string, name: string, edges: ArenaFile['edges']): ArenaFi
     floor: 0,
     width: 10,
     spawns: [3.6, 6.4],
-    ledges: [],
+    ledges,
     edges,
   };
 }
 
 export const ARENA_FILES: Readonly<Record<string, ArenaFile>> = {
-  // The roof just ends: a hit near either edge can knock someone off (ring-out).
-  rooftop: arenaFile('rooftop', 'Rooftop at Dusk', { left: 'drop', right: 'drop' }),
+  // The roof just ends: a hit near either edge can knock someone off (ring-out). An air-conditioning
+  // unit near each end is a ledge (AR-6): high ground, and a guard rail you can be launched over.
+  rooftop: arenaFile('rooftop', 'Rooftop at Dusk', { left: 'drop', right: 'drop' }, [
+    { x: 1.0, y: 0.55, width: 1.1 },
+    { x: 7.9, y: 0.55, width: 1.1 },
+  ]),
   dojo: arenaFile('dojo', 'Bamboo Dojo', { left: 'wall', right: 'wall' }),
 };
 
@@ -32,5 +36,5 @@ export function arenaFileById(id: string | null | undefined): ArenaFile {
 
 /** What the simulation needs from an arena file. */
 export function simArena(file: ArenaFile): SimArena {
-  return { width: file.width, spawns: file.spawns, edges: file.edges };
+  return { width: file.width, spawns: file.spawns, edges: file.edges, ledges: file.ledges };
 }

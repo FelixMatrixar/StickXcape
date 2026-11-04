@@ -37,6 +37,8 @@ interface Seen {
 }
 
 const NEAR = toFixed(0.25);
+/** Someone this close past a ledge's end still counts as on or behind it. */
+const LEDGE_REACH = toFixed(0.2);
 
 export class PracticeBot {
   readonly side: 0 | 1;
@@ -148,6 +150,9 @@ export class PracticeBot {
       return this.hold(gap < toFixed(1.4) ? back : 0, 8, me);
     }
 
+    // A ledge in the way (AR-6), or them standing on one: hop up.
+    if (this.ledgeAhead(sim, me, them) && this.chance(0.3)) return this.hold(Button.Up | fwd, 6, me);
+
     // Spacing and offence.
     if (gap > range + toFixed(0.45)) {
       if (this.chance(0.012)) return this.hold(Button.Up | fwd, 4, me);
@@ -168,6 +173,18 @@ export class PracticeBot {
     if (this.chance(0.02)) return this.hold(fwd, 6, me);
     if (this.chance(0.01)) return this.hold(back, 10, me);
     return this.emit(me, 0);
+  }
+
+  /** True when a ledge stands between us, close in front, and we're below its top. */
+  private ledgeAhead(sim: FightSim, me: Fighter, them: Fighter): boolean {
+    const right = them.x > me.x;
+    for (const ledge of sim.ledges) {
+      if (me.y >= ledge.top) continue;
+      const between = right ? ledge.x1 > me.x && ledge.x0 < them.x + LEDGE_REACH : ledge.x0 < me.x && ledge.x1 > them.x - LEDGE_REACH;
+      const ahead = right ? ledge.x0 - me.x : me.x - ledge.x1;
+      if (between && ahead >= 0 && ahead < toFixed(0.6)) return true;
+    }
+    return false;
   }
 
   private hold(buttons: number, frames: number, me: Fighter): number {

@@ -137,6 +137,8 @@ export class FightScene {
   private koDim = 0;
   private vignette: HTMLCanvasElement | null = null;
   private lastFrameMs = 16;
+  /** The arena's ledges in metres (AR-6). */
+  private ledges: { x0: number; x1: number; top: number }[] = [];
   private stepClock = 0;
   idles: [CompiledMove | null, CompiledMove | null];
   private readonly mixA = createPose();
@@ -160,6 +162,7 @@ export class FightScene {
     this.idles = options.idles ?? [null, null];
     this.camera.arenaWidth = fromFixed(this.sim.arenaWidth);
     this.camera.edgeMargin = this.sim.dropLeft || this.sim.dropRight ? 1.7 : 0.6;
+    this.ledges = ledgesInMetres(this.sim);
     this.resize();
     this.syncViews(true);
   }
@@ -168,6 +171,7 @@ export class FightScene {
   setSim(sim: FightSim): void {
     this.sim = sim;
     this.camera.edgeMargin = sim.dropLeft || sim.dropRight ? 1.7 : 0.6;
+    this.ledges = ledgesInMetres(sim);
     this.particles.clear();
     this.popups.clear();
     for (const view of this.views) {
@@ -233,6 +237,15 @@ export class FightScene {
     return Math.max(-0.85, Math.min(0.85, (this.camera.sx(x) / this.camera.width) * 2 - 1));
   }
 
+  /** The height of the floor or ledge top under x, for a point at height y (metres). */
+  private groundAt(x: number, y: number): number {
+    let ground = 0;
+    for (const ledge of this.ledges) {
+      if (x >= ledge.x0 && x <= ledge.x1 && ledge.top <= y + 0.05 && ledge.top > ground) ground = ledge.top;
+    }
+    return ground;
+  }
+
   /** Footsteps from foot plants, whooshes from limb speed. */
   private motionEffects(): void {
     for (const f of this.sim.fighters) {
@@ -243,13 +256,14 @@ export class FightScene {
       for (let foot = 0; foot < 2; foot++) {
         const ankle = foot === 0 ? J.lAnkle : J.rAnkle;
         const toe = foot === 0 ? J.lToe : J.rToe;
-        const y = Math.min(view.stepCurr[2 * ankle + 1], view.stepCurr[2 * toe + 1]);
+        const floor = fromFixed(f.floor);
+        const y = Math.min(view.stepCurr[2 * ankle + 1], view.stepCurr[2 * toe + 1]) - floor;
         const before = view.footY[foot];
         view.footY[foot] = y;
         if (!lying && before > 0.035 && y <= 0.016) {
           const drop = Math.min(1, (before - y) * 18);
           const x = view.stepCurr[2 * toe];
-          if (!this.quiet) dust(this.particles, x, 2 + Math.round(drop * 4), 0.4, 0.4 + drop);
+          if (!this.quiet) dust(this.particles, x, 2 + Math.round(drop * 4), 0.4, 0.4 + drop, floor);
           this.sound?.footstep(0.3 + drop * 0.7, this.pan(x));
         }
       }
@@ -322,7 +336,11 @@ export class FightScene {
           this.popups.show(`${event.combo}`, fromFixed(this.sim.fighters[event.side].x), 2.3, { fill: attacker.ink, stroke: '#ffffff', size: 0.36, sub: 'HITS', life: 1.1, rise: 0.05 }, `combo${event.side}`);
         }
         if (this.damageNumbers) this.popups.show(`${(event.damage / 10).toFixed(event.damage % 10 ? 1 : 0)}`, x + 0.1, y + 0.18, POP.damage);
-        if (event.launch) dust(ps, fromFixed(this.sim.fighters[event.target].x), 6, 0.5, 1.2);
+        if (event.launch) {
+          const t = this.sim.fighters[event.target];
+          const tx = fromFixed(t.x);
+          dust(ps, tx, 6, 0.5, 1.2, this.groundAt(tx, fromFixed(t.y)));
+        }
         this.camera.addTrauma(0.14 + s * 0.13 + (event.counter ? 0.1 : 0));
         this.sound?.hit(s, event.counter, pan);
         this.haptic?.(s >= 2 ? 'heavy' : 'light');
@@ -381,14 +399,15 @@ export class FightScene {
         return;
       case 'jump': {
         const x = fromFixed(event.x);
-        dust(ps, x, 4, 0.3, 0.8);
+        dust(ps, x, 4, 0.3, 0.8, fromFixed(event.y));
         this.sound?.jump(this.pan(x));
         return;
       }
       case 'land': {
         const x = fromFixed(event.x);
-        dust(ps, x, event.hard ? 10 : 5, 0.5, event.hard ? 1.6 : 0.9);
-        if (event.hard) ps.spawn(K.ring, x, 0.02, { size: 0.1, size2: 0.6, life: 0.3, color: 'rgba(120,105,90,0.5)' });
+        const y = fromFixed(event.y);
+        dust(ps, x, event.hard ? 10 : 5, 0.5, event.hard ? 1.6 : 0.9, y);
+        if (event.hard) ps.spawn(K.ring, x, y + 0.02, { size: 0.1, size2: 0.6, life: 0.3, color: 'rgba(120,105,90,0.5)' });
         this.sound?.land(event.hard ? 1 : 0.5, this.pan(x));
         return;
       }
@@ -396,14 +415,14 @@ export class FightScene {
         const x = fromFixed(event.x);
         const f = this.sim.fighters[event.side];
         for (let i = 0; i < 6; i++) {
-          ps.spawn(K.puff, x - f.facing * event.dir * 0.1, 0.05, { vx: -f.facing * event.dir * (1 + Math.random() * 2), vy: 0.2 + Math.random() * 0.3, life: 0.4, size: 0.04, size2: 0.14, color: 'rgba(120,105,90,0.5)', drag: 4 });
+          ps.spawn(K.puff, x - f.facing * event.dir * 0.1, fromFixed(event.y) + 0.05, { vx: -f.facing * event.dir * (1 + Math.random() * 2), vy: 0.2 + Math.random() * 0.3, life: 0.4, size: 0.04, size2: 0.14, color: 'rgba(120,105,90,0.5)', drag: 4 });
         }
         this.sound?.dash(this.pan(x));
         return;
       }
       case 'knockdown': {
         const x = fromFixed(event.x);
-        dust(ps, x, 12, 1.2, 1.6);
+        dust(ps, x, 12, 1.2, 1.6, fromFixed(event.y));
         this.camera.addTrauma(0.18);
         this.sound?.knockdown(this.pan(x));
         return;
@@ -427,9 +446,10 @@ export class FightScene {
       case 'throw': {
         const x = fromFixed(event.x);
         const attacker = this.inks[event.side];
-        dust(ps, x, 16, 1.4, 2);
-        ps.spawn(K.ring, x, 0.03, { size: 0.15, size2: 1.1, life: 0.42, color: 'rgba(255,240,220,0.8)' });
-        ps.spawn(K.burst, x, 0.25, { size: 0.06, size2: 0.5, life: 0.3, color: '#ffffff', rot: Math.random() * 3 });
+        const floor = fromFixed(event.y) - 0.15;
+        dust(ps, x, 16, 1.4, 2, floor);
+        ps.spawn(K.ring, x, floor + 0.03, { size: 0.15, size2: 1.1, life: 0.42, color: 'rgba(255,240,220,0.8)' });
+        ps.spawn(K.burst, x, floor + 0.25, { size: 0.06, size2: 0.5, life: 0.3, color: '#ffffff', rot: Math.random() * 3 });
         inkSpray(ps, x, 0.3, 0, 1, 18, 6, attacker.ink, 0.026);
         this.popups.show('THROW', x, 1.5, { fill: '#ffffff', stroke: attacker.deep, size: 0.26, life: 0.85 });
         const target = this.views[event.target];
@@ -483,7 +503,7 @@ export class FightScene {
       }
       case 'roll': {
         const x = fromFixed(event.x);
-        dust(ps, x, 8, 0.8, 1.1);
+        dust(ps, x, 8, 0.8, 1.1, fromFixed(event.y));
         this.sound?.roll(this.pan(x));
         return;
       }
@@ -553,9 +573,10 @@ export class FightScene {
     ragdoll.arenaWidth = fromFixed(this.sim.arenaWidth);
     ragdoll.dropLeft = this.sim.dropLeft;
     ragdoll.dropRight = this.sim.dropRight;
-    ragdoll.onImpact = (speed, px) => {
+    ragdoll.ledges = this.ledges;
+    ragdoll.onImpact = (speed, px, py) => {
       const strength = Math.min(1, speed / 8);
-      dust(ps, px, 3 + Math.round(strength * 8), 0.6, 0.6 + strength * 1.4);
+      dust(ps, px, 3 + Math.round(strength * 8), 0.6, 0.6 + strength * 1.4, py);
       if (strength > 0.25) this.camera.addTrauma(strength * 0.25);
       this.sound?.body(strength, this.pan(px));
     };
@@ -765,14 +786,15 @@ export class FightScene {
         low = Math.min(low, view.world[2 * j + 1]);
       }
       const cx = (minX + maxX) / 2;
-      const overVoid = (this.sim.dropLeft && cx < 0) || (this.sim.dropRight && cx > this.camera.arenaWidth) || low < -0.05;
+      const ground = this.groundAt(cx, low);
+      const overVoid = (this.sim.dropLeft && cx < 0) || (this.sim.dropRight && cx > this.camera.arenaWidth) || low < ground - 0.05;
       if (overVoid) continue;
-      const height = Math.max(0, low);
+      const height = Math.max(0, low - ground);
       const fade = Math.max(0.2, 1 - height / 2.5);
       const w = (Math.max(0.36, maxX - minX) * 0.55 + 0.1) * fade;
       ctx.fillStyle = `rgba(20, 12, 20, ${0.26 * fade})`;
       ctx.beginPath();
-      ctx.ellipse(cam.sx(cx), cam.sy(0), w * cam.ppm, Math.max(2, w * cam.ppm * 0.16), 0, 0, Math.PI * 2);
+      ctx.ellipse(cam.sx(cx), cam.sy(ground), w * cam.ppm, Math.max(2, w * cam.ppm * 0.16), 0, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -876,4 +898,8 @@ export class FightScene {
     this.vignette = canvas;
     return canvas;
   }
+}
+
+function ledgesInMetres(sim: FightSim): { x0: number; x1: number; top: number }[] {
+  return sim.ledges.map((l) => ({ x0: fromFixed(l.x0), x1: fromFixed(l.x1), top: fromFixed(l.top) }));
 }

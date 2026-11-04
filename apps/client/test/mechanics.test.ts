@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { PracticeBot } from '../src/engine/bot.ts';
 import { FightSim, GUARD_MAX, PHASE, S, THROW_DAMAGE, type SimEvent, type SimArena } from '../src/engine/sim.ts';
 import { buildLoadout } from '../src/moves/loadout.ts';
+import { arenaFileById, simArena } from '../src/render/arena-files.ts';
 
 const WALLS: SimArena = { width: 10, spawns: [3.6, 6.4] };
 const DROPS: SimArena = { width: 10, spawns: [3.6, 6.4], edges: { left: 'drop', right: 'drop' } };
+/** The rooftop: drop edges and an air-conditioning unit (a ledge) near each end. */
+const ROOF: SimArena = simArena(arenaFileById('rooftop'));
 
 function fightReady(arena: SimArena = WALLS, seed = 11): FightSim {
   const loadout = buildLoadout({}, []);
@@ -130,6 +133,52 @@ describe('get-up rolls', () => {
   });
 });
 
+describe('ledges', () => {
+  const ledge = ROOF.ledges![0];
+  const top = toFixed(ledge.y);
+
+  /** The left fighter walks to the left ledge, then jumps onto it. */
+  function climb(sim: FightSim): void {
+    run(sim, 90, () => [Button.Left, 0]);
+    run(sim, 60, (i) => [i < 8 ? Button.Up | Button.Left : 0, 0]);
+  }
+
+  it('stop anyone walking into their side', () => {
+    const sim = fightReady(ROOF);
+    run(sim, 90, () => [Button.Left, 0]);
+    const f = sim.fighters[0];
+    expect(f.x).toBe(toFixed(ledge.x + ledge.width) + toFixed(0.12));
+    expect(f.y).toBe(0);
+  });
+
+  it('hold a fighter who jumps onto the top, and drop one who walks off the end', () => {
+    const sim = fightReady(ROOF);
+    climb(sim);
+    const f = sim.fighters[0];
+    expect(f.floor).toBe(top);
+    expect(f.y).toBe(top);
+    expect(f.state).toBe(S.idle);
+    // Off the far end into the gap before the drop edge: down to the roof, and no further.
+    run(sim, 120, () => [Button.Left, 0]);
+    expect(f.floor).toBe(0);
+    expect(f.y).toBe(0);
+    expect(f.x).toBeLessThan(toFixed(ledge.x));
+    expect(sim.phase).toBe(PHASE.fight);
+  });
+
+  it('send the bot up after someone standing on one', () => {
+    const sim = fightReady(ROOF);
+    climb(sim);
+    const bot = new PracticeBot(1, 3, 'hard');
+    let climbed = false;
+    for (let i = 0; i < 60 * 8 && !climbed; i++) {
+      sim.step([0, bot.input(sim)]);
+      climbed = sim.fighters[1].floor === top;
+    }
+    expect(climbed).toBe(true);
+  });
+});
+
 describe('determinism with the new mechanics', () => {
   it('two runs agree with grabs, blocks and drop edges in play', () => {
     const left = masher(3, Button.Right);
@@ -146,6 +195,20 @@ describe('determinism with the new mechanics', () => {
     }
     expect(a.hash()).toBe(b.hash());
     expect(seen.has('grab') || seen.has('throw')).toBe(true);
+  });
+
+  it('two bot runs agree on the rooftop, ledges and all', () => {
+    const play = () => {
+      const sim = new FightSim({ seed: 21, arena: ROOF, loadouts: [buildLoadout({}, []), buildLoadout({}, [])] });
+      const bots = [new PracticeBot(0, 5, 'hard'), new PracticeBot(1, 6, 'normal')] as const;
+      const hashes: number[] = [];
+      for (let f = 0; f < 60 * 60 * 4 && !sim.over; f++) {
+        sim.step([bots[0].input(sim), bots[1].input(sim)]);
+        if (f % 60 === 0) hashes.push(sim.hash());
+      }
+      return hashes;
+    };
+    expect(play()).toEqual(play());
   });
 
   it('bots finish a match on a drop-edge arena', () => {
