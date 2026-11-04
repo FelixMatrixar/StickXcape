@@ -48,6 +48,8 @@ export interface AiConfig {
   nameChecksPerDay: number;
   /** Backdrop checks before a photo arena is shared. */
   arenaChecksPerDay: number;
+  /** Taunt and victory move checks before quick match; a move already checked is free. */
+  gestureChecksPerDay: number;
   /** One IP may use this many players' worth of the daily limits (shared Wi-Fi, rotated ids). */
   perIpMultiplier: number;
   cacheEntries: number;
@@ -176,6 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       matchTipsPerDay: int(env, 'AI_MATCH_TIPS_PER_DAY', 60, 0, 100_000),
       nameChecksPerDay: int(env, 'AI_NAME_CHECKS_PER_DAY', 20, 0, 100_000),
       arenaChecksPerDay: int(env, 'AI_ARENA_CHECKS_PER_DAY', 10, 0, 100_000),
+      gestureChecksPerDay: int(env, 'AI_GESTURE_CHECKS_PER_DAY', 20, 0, 100_000),
       perIpMultiplier: 10,
       cacheEntries: 5000,
       cacheTtlMs: 24 * 60 * 60 * 1000,

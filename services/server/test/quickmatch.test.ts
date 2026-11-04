@@ -86,7 +86,7 @@ describe('quick match', () => {
     expect(await refused).toMatchObject({ code: 'unsigned_move' });
 
     const anaMoves = await ana.client.signMoves(toyLoadout());
-    expect(anaMoves[0]!.signature).toMatch(/^v1\.[\w-]{43}$/);
+    expect(anaMoves[0]!.signature).toMatch(/^v2\.[\w-]{43}$/);
     const boGets = nextEvent(boRelay, 'loadout');
     anaRelay.sendLoadout(anaMoves);
     expect((await boGets).moves).toEqual(anaMoves);
@@ -250,6 +250,29 @@ describe('signing, blocks and reports', () => {
     const [signed] = await client.signMoves([move]);
     expect({ ...signed, signature: undefined }).toEqual({ ...move, signature: undefined });
     await expect(new AccountClient({ baseUrl: origin, fetch: cookieFetch() }).signMoves([move])).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('has Muse Spark look at taunt and victory moves before signing them', async () => {
+    // A stand-in for Meta that refuses taunts and allows victory moves.
+    const asked: string[] = [];
+    const fetch: typeof globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init!.body)) as { messages: { content: { text?: string; image_url?: { url: string } }[] }[] };
+      const [text, image] = body.messages[1]!.content;
+      asked.push(`${text!.text} ${image!.image_url!.url.slice(0, 22)}`);
+      const content = JSON.stringify({ allowed: !text!.text!.includes('taunt'), reason: 'test' });
+      return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+    };
+    const { origin } = await serve({ MODEL_API_KEY: 'test-key' }, { fetch });
+    const { client } = await signedIn(origin, 'Ana');
+    const jab = toyLoadout()[0]!;
+    const taunt = await withHash({ ...jab, id: '7a1c0de0-0000-4000-8000-0000000000aa', slot: 'taunt', name: 'Hip Wiggle' });
+    const victory = await withHash({ ...jab, id: '7a1c0de0-0000-4000-8000-0000000000bb', slot: 'victory', name: 'Champion' });
+
+    await expect(client.signMoves([jab, taunt, victory])).rejects.toMatchObject({ status: 400, error: 'move_blocked', message: expect.stringMatching(/^"Hip Wiggle" can't be shown/) });
+    const signed = await client.signMoves([jab, victory]);
+    expect(signed.map((move) => move.signature?.slice(0, 3))).toEqual(['v2.', 'v2.']);
+    // Each taunt or victory move is drawn and checked once; strikes never are.
+    expect(asked.sort()).toEqual(['Slot: taunt. Six frames: data:image/png;base64,', 'Slot: victory. Six frames: data:image/png;base64,']);
   });
 
   it('keeps a list of blocked players', async () => {
