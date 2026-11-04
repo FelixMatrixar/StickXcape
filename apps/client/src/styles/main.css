@@ -2500,6 +2500,27 @@ input[type='range'].slider {
   padding: 2px 8px 8px 2px;
 }
 
+/* Ready stays in reach when the arenas don't fit, as on a landscape phone under a browser's toolbar. */
+.room .room-you {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+@media (max-height: 480px) {
+  .room .room-col:last-child {
+    margin-top: 0;
+  }
+
+  .room .arena-card {
+    min-height: 64px;
+  }
+
+  .room .arena-card small {
+    display: none;
+  }
+}
+
 .invite {
   padding: 14px;
   display: flex;

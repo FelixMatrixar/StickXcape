@@ -148,7 +148,7 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
   right.append(
     h('div', { class: 'kicker rise', text: 'Arena' }),
     arenaGrid,
-    h('div', { class: 'card rise', style: 'padding:12px 14px;display:flex;flex-direction:column;gap:10px' }, h('div', { class: 'kicker', text: 'Your fighter' }), h('div', { style: 'display:flex;align-items:center;gap:10px;font:800 14px/1.2 var(--ui)' }, h('span', { class: 'dot', style: `background:${ink.ink};width:14px;height:14px` }), `${settings.nickname ?? 'You'} in ${ink.name}`), readyButton),
+    h('div', { class: 'card rise room-you', style: 'padding:12px 14px;display:flex;flex-direction:column;gap:10px' }, h('div', { class: 'kicker', text: 'Your fighter' }), h('div', { style: 'display:flex;align-items:center;gap:10px;font:800 14px/1.2 var(--ui)' }, h('span', { class: 'dot', style: `background:${ink.ink};width:14px;height:14px` }), `${settings.nickname ?? 'You'} in ${ink.name}`), readyButton),
   );
 
   function nameOf(info: RoomInfo, player: number | undefined): string {
