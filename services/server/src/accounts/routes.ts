@@ -30,9 +30,11 @@ import {
   type SaveMoveResponse,
   type SignMovesResponse,
 } from '@sticxcape/shared';
+import type { AiGateway } from '../ai/gateway.ts';
 import type { Config } from '../config.ts';
 import { WindowLimiter } from '../lib/limits.ts';
 import type { Metrics } from '../metrics/metrics.ts';
+import { moveSheet } from '../moderation/stick-figure.ts';
 import type { MoveSigner } from './signing.ts';
 import type { AccountStore } from './store.ts';
 import { PASSKEY_ALGORITHMS, PasskeyError, verifyAssertion, verifyRegistration, type NewCredential, type RelyingParty } from './webauthn.ts';
@@ -43,6 +45,8 @@ export interface AccountRoutesOptions {
   store: AccountStore | null;
   /** Signs checked moves for quick match; null when accounts are off. */
   signer: MoveSigner | null;
+  /** Checks taunt and victory moves before they're signed. */
+  ai: AiGateway;
   metrics: Metrics;
   now: () => number;
 }
@@ -81,7 +85,7 @@ interface Session {
  * use passkeys; a sign-in is an HttpOnly, SameSite=Lax cookie that lasts 180 days and renews
  * itself when used. Returns a pruner for the server's sweep timer.
  */
-export function registerAccountRoutes(app: FastifyInstance, { config, store, signer, metrics, now }: AccountRoutesOptions): { prune(at: number): void } {
+export function registerAccountRoutes(app: FastifyInstance, { config, store, signer, ai, metrics, now }: AccountRoutesOptions): { prune(at: number): void } {
   const ceremonies = new Map<string, Ceremony>();
   const passkeyLimiter = new WindowLimiter(config.accounts.passkeyLimitPerIp, config.accounts.passkeyWindowMs);
   const writeLimiter = new WindowLimiter(LIBRARY_WRITES, 10 * 60 * 1000);
@@ -355,7 +359,11 @@ export function registerAccountRoutes(app: FastifyInstance, { config, store, sig
 
   // Quick match: signed loadouts, blocks and reports.
 
-  /** Re-checks moves and signs them; quick match takes only signed moves (MP-8). */
+  /**
+   * Re-checks moves and signs them; quick match takes only signed moves (MP-8). Taunts and
+   * victory moves only show off, so they're where a rude gesture would go: Muse Spark looks at
+   * the server's own drawing of each before strangers can see it.
+   */
   app.post<{ Reply: SignMovesResponse | ApiError }>(`${ACCOUNT_PATH}/moves/sign`, { preHandler: sameOrigin }, async (request, reply) => {
     const ready = requireSession(request, reply);
     if (!ready) return reply;
@@ -363,16 +371,29 @@ export function registerAccountRoutes(app: FastifyInstance, { config, store, sig
     if (!writeLimiter.take(ready.session.account.id, now())) return reply.code(429).send(apiError('too_many_changes', 'Too many requests; try again in a few minutes'));
     const raw = (request.body as { moves?: unknown } | undefined)?.moves;
     if (!Array.isArray(raw) || raw.length === 0 || raw.length > SIGN_MAX_MOVES) return reply.code(400).send(apiError('bad_move', `Send 1 to ${SIGN_MAX_MOVES} moves`));
-    const signed: MoveFile[] = [];
+    const moves: MoveFile[] = [];
     for (const [i, item] of raw.entries()) {
       const move = parseMoveFile(item);
       if (!move) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} is malformed`));
       if (!(await verifyMoveHash(move))) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} (${move.name}): its hash doesn't match its contents`));
       const problem = moveRuleProblem(move);
       if (problem) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} (${move.name}): ${problem}`));
-      signed.push(signer.sign(move));
+      moves.push(move);
     }
-    return { moves: signed };
+
+    const who = { playerKey: ready.session.account.id, ip: request.ip };
+    const shown = moves.filter((move): move is MoveFile & { slot: 'taunt' | 'victory' } => move.slot === 'taunt' || move.slot === 'victory');
+    const verdicts = await Promise.all(shown.map((move) => ai.checkGesture(move.slot, move.hash, () => moveSheet(move), who)));
+    const blocked = shown.filter((_, i) => verdicts[i] === 'blocked');
+    if (blocked.length > 0) {
+      const names = blocked.map((move) => `"${move.name}"`).join(' and ');
+      return reply.code(400).send(apiError('move_blocked', `${names} can't be shown to strangers; record ${blocked.length > 1 ? 'others' : 'another'} or use the default`));
+    }
+    // Block until checked: in production nothing unchecked is signed. Without a Meta key (development) it is.
+    if (config.env === 'production' && verdicts.includes('unchecked')) {
+      return reply.code(503).send(apiError('check_unavailable', "Your taunt or victory move couldn't be checked right now; try again soon"));
+    }
+    return { moves: moves.map((move) => signer.sign(move)) };
   });
 
   app.get<{ Reply: { players: BlockedPlayer[] } | ApiError }>(`${ACCOUNT_PATH}/blocks`, async (request, reply) => {

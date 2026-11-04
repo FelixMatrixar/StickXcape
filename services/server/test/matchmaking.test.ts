@@ -84,8 +84,9 @@ describe('MoveSigner', () => {
   it('refuses unsigned moves, garbled signatures and altered frames under a copied hash', () => {
     const signed = signer.sign(move);
     expect(signer.verify(move)).toBe(false);
-    expect(signer.verify({ ...signed, signature: 'v1.AAAA' })).toBe(false);
-    expect(signer.verify({ ...signed, signature: signed.signature!.replace('v1.', 'v2.') })).toBe(false);
+    expect(signer.verify({ ...signed, signature: 'v2.AAAA' })).toBe(false);
+    // v1 signatures came before taunts were checked, so they no longer pass.
+    expect(signer.verify({ ...signed, signature: signed.signature!.replace('v2.', 'v1.') })).toBe(false);
     const values = decodeFrames(move.frames)!;
     values[FRAME_VALUES + 2] = values[FRAME_VALUES + 2]! + 100;
     const altered: MoveFile = { ...signed, frames: encodeFrames(values) };

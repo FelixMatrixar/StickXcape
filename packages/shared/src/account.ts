@@ -62,6 +62,8 @@ export interface SaveMoveResponse {
 /**
  * POST /account/moves/sign: the server re-checks moves (MOVE_RULES) and signs them. Quick match
  * takes only signed moves, so sign the whole loadout, default moves included, before queueing.
+ * Taunt and victory moves also need Muse Spark's OK: a refused one fails with 400 `move_blocked`,
+ * which names it, so swap in the default and sign again.
  */
 export interface SignMovesRequest {
   moves: MoveFile[];

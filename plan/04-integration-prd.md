@@ -113,7 +113,7 @@ All calls use HTTPS and reply in JSON. A version mismatch on join tells the phon
 | POST /account/passkey/login | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony; 401: unknown or refused passkey |
 | POST /account/logout | None | account: null | None |
 | DELETE /account | None | Nothing (204); the account, its sign-ins and library are deleted | 401: not signed in |
-| POST /account/moves/sign | moves (1 to 16) | moves, each with a signature | 400: malformed, hash mismatch, or outside the move rules (says which move and why) |
+| POST /account/moves/sign | moves (1 to 16) | moves, each with a signature | 400: malformed, hash mismatch, or outside the move rules (says which move and why); `move_blocked` when Muse Spark refuses a taunt or victory move (names it). 503 `check_unavailable` in production while that check is down |
 | GET /account/blocks | None | players (id, name, blockedAt) | 401 |
 | POST /account/blocks | player (account id) | Nothing (204); never matched again, either way round | 404: no such player |
 | DELETE /account/blocks/{id} | None | Nothing (204) | 404: not blocked |

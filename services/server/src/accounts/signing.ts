@@ -1,8 +1,9 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { decodeBase64Url, encodeBase64Url, type MoveFile } from '@sticxcape/shared';
 
-const PREFIX = 'v1.';
-const DOMAIN = 'sticxcape-move-v1|';
+/** v2 also means a taunt or victory move passed Muse Spark's check; v1 signatures (before it) no longer pass. */
+const PREFIX = 'v2.';
+const DOMAIN = 'sticxcape-move-v2|';
 
 /**
  * Signs moves the server has checked (MP-8), so quick match can take a loadout on trust: a

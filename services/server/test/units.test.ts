@@ -1,8 +1,11 @@
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
+import { toyLoadout } from '@sticxcape/netcode';
 import { isRoomCode } from '@sticxcape/shared';
 import { loadConfig } from '../src/config.ts';
 import { DailyQuota, LruCache, RollingSamples, TokenBucket, WindowLimiter } from '../src/lib/limits.ts';
 import { newRoomCode, newSeed } from '../src/lib/random.ts';
+import { moveSheet } from '../src/moderation/stick-figure.ts';
 import { RoomStore, type Room } from '../src/rooms/room-store.ts';
 import { FakeClock } from './helpers.ts';
 
@@ -163,5 +166,19 @@ describe('loadConfig', () => {
     // Muse Spark answers "none" with HTTP 400, so it would turn every AI call into a fallback.
     expect(() => loadConfig({ AI_REASONING_EFFORT: 'none' })).toThrow('AI_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh, max');
     expect(() => loadConfig({ LIBRARY_MAX_MOVES: '0' })).toThrow(/LIBRARY_MAX_MOVES/);
+  });
+});
+
+describe('moveSheet', () => {
+  it('draws six frames of a move as a 600 by 480 greyscale PNG', () => {
+    const png = Buffer.from(moveSheet(toyLoadout()[0]!));
+    expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    // IHDR: width, height, 8-bit greyscale.
+    expect([png.readUInt32BE(16), png.readUInt32BE(20), png[24], png[25]]).toEqual([600, 480, 8, 0]);
+    const idat = png.indexOf('IDAT');
+    const rows = inflateSync(png.subarray(idat + 4, idat + 4 + png.readUInt32BE(idat - 4)));
+    expect(rows.length).toBe((600 + 1) * 480);
+    // Six stick figures' worth of ink on the white page.
+    expect(rows.filter((value) => value === 24).length).toBeGreaterThan(3000);
   });
 });

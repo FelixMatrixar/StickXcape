@@ -3,7 +3,7 @@ import type { EndReason } from '@sticxcape/shared';
 import { RollingSamples } from '../lib/limits.ts';
 import { Registry } from './registry.ts';
 
-export type AiCall = 'move_name' | 'match_tips' | 'name_check' | 'arena_check';
+export type AiCall = 'move_name' | 'match_tips' | 'name_check' | 'arena_check' | 'gesture_check';
 
 /** Outcomes of an AI gateway request. `error_*` outcomes count toward the AI error alert. */
 export type AiOutcome =
@@ -74,6 +74,7 @@ export function createMetrics() {
         match_tips: new RollingSamples(500),
         name_check: new RollingSamples(500),
         arena_check: new RollingSamples(500),
+        gesture_check: new RollingSamples(500),
       } satisfies Record<AiCall, RollingSamples>,
     },
     close(): void {

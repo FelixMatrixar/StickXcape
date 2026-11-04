@@ -16,10 +16,12 @@ import { cannedMatchTips, cannedMoveName } from './canned.ts';
 import { AiError, chatJson } from './meta-client.ts';
 import {
   ARENA_IMAGE_PROMPT,
+  GESTURE_PROMPT,
   MATCH_TIPS_PROMPT,
   MOVE_NAME_PROMPT,
   NAME_PROMPT,
   arenaImageMessages,
+  gestureMessages,
   matchTipsMessages,
   moveNameMessages,
   nameMessages,
@@ -38,6 +40,8 @@ export interface ImageVerdict {
 
 /** Sharing an arena isn't a moment anyone waits on mid-game, so its image check may take longer. */
 const ARENA_CHECK_TIMEOUT_MS = 20_000;
+/** Nor is signing a loadout before quick match. */
+const GESTURE_CHECK_TIMEOUT_MS = 20_000;
 
 /** The player used up a daily allowance; the client falls back (HTTP 429). */
 export class AiRateLimitedError extends Error {}
@@ -89,7 +93,37 @@ export class AiGateway {
       match_tips: { player: new DailyQuota(config.matchTipsPerDay), ip: new DailyQuota(config.matchTipsPerDay * config.perIpMultiplier) },
       name_check: { player: new DailyQuota(config.nameChecksPerDay), ip: new DailyQuota(config.nameChecksPerDay * config.perIpMultiplier) },
       arena_check: { player: new DailyQuota(config.arenaChecksPerDay), ip: new DailyQuota(config.arenaChecksPerDay * config.perIpMultiplier) },
+      gesture_check: { player: new DailyQuota(config.gestureChecksPerDay), ip: new DailyQuota(config.gestureChecksPerDay * config.perIpMultiplier) },
     };
+  }
+
+  /**
+   * Whether strangers may see a taunt or victory move, judged from the server's own drawing of
+   * it (`sheet`, a PNG, made only when Meta is asked). Cached by the move's hash. Never throws:
+   * unchecked without a key, over the limit, or when Meta fails.
+   */
+  async checkGesture(slot: 'taunt' | 'victory', moveHash: string, sheet: () => Uint8Array, who: Requester): Promise<NameVerdict> {
+    if (this.mode === 'canned') return 'unchecked';
+    try {
+      const { allowed } = await this.run(
+        'gesture_check',
+        GESTURE_PROMPT,
+        { slot, moveHash },
+        who,
+        () => ({ allowed: false }),
+        async (signal) => {
+          const image = `data:image/png;base64,${Buffer.from(sheet()).toString('base64')}`;
+          const reply = await this.chat(GESTURE_PROMPT, gestureMessages(slot, image), who, signal);
+          if (typeof reply.allowed !== 'boolean') throw new AiError('invalid_response', 'Reply had no verdict');
+          if (!reply.allowed) this.options.log.info({ slot, reason: cleanLine(reply.reason, 80) }, 'move refused for strangers');
+          return { allowed: reply.allowed };
+        },
+        GESTURE_CHECK_TIMEOUT_MS,
+      );
+      return allowed ? 'allowed' : 'blocked';
+    } catch {
+      return 'unchecked';
+    }
   }
 
   /**

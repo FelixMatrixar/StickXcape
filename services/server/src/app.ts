@@ -99,7 +99,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   const roomLimiter = registerRoomRoutes(app, { config, rooms, metrics, now });
   registerRelayRoutes(app, { relay, allowedOrigins: config.allowedOrigins, accounts });
   registerAiRoutes(app, { gateway: ai });
-  const accountRoutes = registerAccountRoutes(app, { config, store: accounts, signer, metrics, now });
+  const accountRoutes = registerAccountRoutes(app, { config, store: accounts, signer, ai, metrics, now });
   const arenaRoutes = registerArenaRoutes(app, { config, store: accounts, ai, metrics, now });
   registerMonitoringRoutes(app, { config, metrics, rooms, relay, ai, alert });
   app.get('/version', async () => ({ minClientVersion: config.minClientVersion, serverVersion: config.serverVersion }));
