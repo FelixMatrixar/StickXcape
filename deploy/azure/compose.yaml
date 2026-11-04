@@ -1,0 +1,38 @@
+# Staging on one small Azure VM (deploy/azure/README.md): the game server, and Caddy in front of
+# it for HTTPS (a free Let's Encrypt certificate) and the relay's WebSockets. The deploy script
+# copies this file to ~/sticxcape on the VM and the source to ~/sticxcape/src. SITE_ADDRESS comes
+# from ~/sticxcape/.env, and MODEL_API_KEY and ADMIN_TOKEN from ~/sticxcape/secrets.env.
+name: sticxcape
+services:
+  app:
+    build: ./src
+    restart: unless-stopped
+    # Time for the server to tell phones it is restarting.
+    stop_grace_period: 15s
+    environment:
+      NODE_ENV: production
+      PUBLIC_URL: https://${SITE_ADDRESS}
+      # Caddy is the one hop in front of the server.
+      TRUST_PROXY: "1"
+      # Accounts, shared photo arenas and reports, on the VM's own disk.
+      DATABASE_FILE: /data/sticxcape.db
+      # Staging uses low daily AI limits.
+      AI_MOVE_NAMES_PER_DAY: "15"
+      AI_MATCH_TIPS_PER_DAY: "30"
+    env_file: secrets.env
+    volumes:
+      - data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${SITE_ADDRESS} --to app:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - app
+volumes:
+  data:
+  caddy_data:

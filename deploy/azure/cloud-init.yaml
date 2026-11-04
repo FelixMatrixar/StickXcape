@@ -1,0 +1,17 @@
+#cloud-config
+# First boot of the staging VM: Docker with Compose, a swap file (the image is built on the VM,
+# which has 1 GB of memory), and the folder the deploy script fills. Ubuntu installs security
+# updates by itself (unattended-upgrades), and Docker brings the containers back after a reboot.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+runcmd:
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - systemctl enable --now docker
+  - usermod -aG docker azureuser
+  - install -d -o azureuser -g azureuser /home/azureuser/sticxcape
