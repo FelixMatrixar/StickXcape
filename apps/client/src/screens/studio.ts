@@ -26,6 +26,8 @@ import { h, press, sleep, stagger, svg, toast } from '../ui/dom.ts';
 import { ICON } from '../ui/icons.ts';
 
 const RECORD_SECONDS = 3;
+/** Hands-free: the countdown starts once the required checks have held this long. */
+const AUTO_START_MS = 1000;
 
 /** Not a loadout place: an idle stance, drawn between moves for looks only (LS-12). */
 const IDLE_PLACE = { key: 'idle', slot: 'taunt', label: 'Idle stance', input: 'Between moves' } as const;
@@ -71,6 +73,10 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   let overlay: HTMLCanvasElement | null = null;
   let lastFrame: PoseFrame | null = null;
   let recording: PoseFrame[] | null = null;
+  /** True during the 3-2-1 before a take, so nothing starts a second one. */
+  let starting = false;
+  /** When the required checks last turned green, for the hands-free start; 0 while they aren't. */
+  let readySince = 0;
   let takes: Take[] = [];
   let current = 0;
   let trim: [number, number] = [0, 0];
@@ -223,6 +229,7 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
 
   function renderSetup(loading: string | null, error?: string): void {
     if (!place) return;
+    readySince = 0;
     statusEl = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
     recButton = h('button', { class: 'rec', attrs: { 'aria-label': 'Record' } }, svg('<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/></svg>'));
     press(recButton, () => void countdownAndRecord(), { sound: 'none', noRipple: true });
@@ -255,7 +262,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
 
   function recordHint(): string {
     const secs = RECORD_SECONDS * (halfSpeed ? 2 : 1);
-    return halfSpeed ? `Move at half speed. You have ${secs} seconds after the countdown.` : `Tap record, then perform within ${secs} seconds after the countdown.`;
+    const start = 'Recording starts by itself once the checks are green, or tap record.';
+    return halfSpeed ? `${start} Move at half speed: you have ${secs} seconds after the countdown.` : `${start} Perform within ${secs} seconds after the countdown.`;
   }
 
   function updateStatus(): void {
@@ -265,7 +273,15 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     statusEl.replaceChildren(
       ...checks.map((c) => h('div', { class: 'status-line' }, h('i', { class: `light ${c.ok ? 'is-good' : 'is-bad'}` }), c.text)),
     );
-    if (recButton && !recording) recButton.disabled = !checks.every((c) => c.ok || c.optional);
+    if (!recButton || recording || starting) return;
+    const ready = checks.every((c) => c.ok || c.optional);
+    recButton.disabled = !ready;
+    // Hands-free: the player stands back from the phone and can't reach Record, so once the
+    // required checks have held for a moment the countdown starts by itself.
+    const now = performance.now();
+    if (!ready || !statusEl.isConnected || !recButton.isConnected) readySince = 0;
+    else if (readySince === 0) readySince = now;
+    else if (now - readySince >= AUTO_START_MS) void countdownAndRecord();
   }
 
   let lastStatusAt = 0;
@@ -425,9 +441,12 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   }
 
   async function countdownAndRecord(): Promise<void> {
-    if (!recButton || recording || !place) return;
+    if (!recButton || recording || starting || !place) return;
+    starting = true;
+    readySince = 0;
     recButton.disabled = true;
     await countdown();
+    starting = false;
     if (disposed) return;
     recording = [];
     ui.record(true);
