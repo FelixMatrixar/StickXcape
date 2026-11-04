@@ -25,7 +25,7 @@ The services are everything that runs off the phone. In the MVP they are deliber
 
 ## Progress
 
-Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from `main` after PR 1 merged the backend with the game client. 138 automated tests pass, live Meta AI calls work, and every CI step passes when run locally, but nothing has been tried on phones or deployed yet.
+Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from `main` after PR 1 merged the backend with the game client. 168 automated tests pass and live Meta AI calls work, but nothing has been tried on phones or deployed yet. Rollback netcode, the first launch item, is built and tested with bots; the fight screen keeps using input delay until it switches rollback on (see below).
 
 | Deliverable | Status | Code |
 | --- | --- | --- |
@@ -36,18 +36,20 @@ Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from 
 | AI gateway | Tested against a stand-in for Meta's API (structured output, reply cleanup, the cache, daily limits, one retry, the 4.5 s budget and the fallbacks), and live: 27 calls for names and tips, all with usable replies. It uses Muse Spark 1.1, which answered in 2.3 s (median of 6 calls, slowest 3.0 s). Muse Spark 1.3 took 3.3 s (median of 17, slowest 4.9 s, past the budget) at the same price, and its names and tips were no better. `minimal` is the lowest reasoning level Muse Spark accepts (it rejects `none`), so the server refuses to start with an unknown level | `services/server/src/ai` |
 | Metrics and alert | Tested: Prometheus `/metrics`, an `/admin` dashboard, and an alert when AI errors pass 5% (optional Slack or Discord webhook) | `services/server/src/metrics` |
 | Netcode client | Tested, with two fixes: the driver's first update could skip its frame, and the bad-network simulation could reorder messages | `packages/netcode` |
+| Rollback netcode (MP-6, launch) | Tested in unit tests and in bot matches through the relay: 2 frames of input delay, and up to 8 frames played on a guess of the opponent's input and replayed when the guess was wrong. State hashes and the result go out only for final frames, and a phone that runs ahead of its opponent slows by 10% until they're in step. Matches through a simulated network end in exactly the state a clean replay of the same inputs gives. A match uses rollback only when both phones ask, so nothing changes for the current fight screen. The relay lab has a switch for it. Not yet tried on phones | `packages/netcode/src/rollback-driver.ts`, `session.ts` |
 | Client mocks | Tested: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
 | Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
 | Relay lab (a toy match between two phones) | Written and tried in a browser against a bot: create a room, share the link, ready, fight, rematch. Shows ping, input delay, time spent waiting and the state checks | `services/server/lab` |
-| Automated tests, bot matches, bad-network and load scripts | Written: 138 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks | `*/test`, `services/server/scripts` |
-| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed yet. `fly.toml` puts staging in Singapore (`sin`), nearest the playtesters. Every CI step passes when run locally on `backend-mvp`: typecheck, 153 tests, build, 50 bot matches, slow-network matches and the image smoke test. GitHub's own CI results haven't been checked. Staging deploys by hand and needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta key | `Dockerfile`, `fly.toml`, `.github/workflows` |
-| Launch services | Not started; they wait for playtests | |
+| Automated tests, bot matches, bad-network and load scripts | Written: 168 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks; `--rollback` plays them with rollback netcode | `*/test`, `services/server/scripts` |
+| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed yet. `fly.toml` puts staging in Singapore (`sin`), nearest the playtesters. Before rollback, every CI step passed when run locally (153 tests then). With rollback, typecheck, the 168 tests and the build pass locally; CI now also plays rollback bot matches at 200 ms more round trip. GitHub's own CI results haven't been checked. Staging deploys by hand and needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta key | `Dockerfile`, `fly.toml`, `.github/workflows` |
+| Other launch services | Not started: accounts, the cloud move library and signing, quick match, photo arenas, moderation | |
 
 **Bot results so far** (one laptop; the network checks ran inside Docker, on Linux):
 
 - 100 rooms at once (200 bots): all 100 matches finished with no desync or relay error. The relay held inputs under 0.2 ms (p99) and picked 3 frames of input delay for every match.
 - Bad networks, 12 matches at each level with ±20 ms jitter, no desyncs: +50 ms round trip between the phones picked 3 frames and the phones never waited; +100 ms picked 4 to 5 frames and they waited 0.5% of the time; +150 ms picked 6 frames and they never waited.
 - Run these checks in Docker or on Linux. Windows timers tick every 15.6 ms, which stretches the bots' added delays, and Docker Desktop's port forwarding on Windows raised round trips to 40 ms under load. The relay's own hold stayed under 0.2 ms either way.
+- Rollback against input delay, 4 matches each at +200 ms round trip ±20 ms (on Windows, so about 240 ms between the phones): rollback played with 2 frames of input delay, rewound at most 7 frames and never waited, with no desyncs. Input delay on the same network needed its 6-frame maximum (100 ms) and still waited 28.6% of the time. The toy bots change buttons often, so rollback replayed 1.7 frames for every new one; the fight engine's 0.005 ms a frame makes that negligible.
 
 **Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. For week 2, the relay half is ready to try on two phones with the lab at `/lab/`, and live Meta move names arrive in 2 to 3 seconds, inside the 5-second target. For week 3, CI runs the 50-match and slow-network bot checks, and staging needs the Fly.io setup in `fly.toml`.
 
@@ -61,6 +63,16 @@ Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from 
 - Move frames are 19 little-endian int16 values each: root x and y in millimetres, then 17 joint angles in 1/65536 of a turn. The move hash covers a fixed JSON array of the hashed fields.
 - `POST /ai/move-name` takes the 3 images as `keyframes` (PNG or WebP data URLs). Phones send a random id in `X-Player-Id` for per-player limits, and both AI calls answer 429 once the daily limit is hit.
 - Room codes are 16 characters, invite links are `/r/{code}`, and the first player to join hosts.
+- Rollback: `ready` may carry `rollback: true`. When both fighters send it, `start` has `rollback: 8` and 2 frames of input delay (more only past about 260 ms between the phones); otherwise `rollback: 0` and the usual input delay. Rollback matches add a `sync` message (`lateness`, in frames), which each phone sends once a second and the relay passes to the other.
+- `LockstepSession` is now `MatchSession`, which runs both kinds of match. The old name still works, so existing code needs no change.
+
+**Turning on rollback in the fight screen.** The frontend owns this switch; the netcode side is ready.
+
+1. Create the `RelayClient` with `{ rollback: true }`, or set `client.rollback = true` before `ready()`.
+2. When `session.rollback > 0`, run the fight with `RollbackDriver` instead of `LockstepDriver`. Its hooks are `sampleInput`, `simulate(inputs, frame, replay)`, `save`, `load` and `stateHash`; `FightSim.save()` and `load()` fit as they are.
+3. Put anything the screen decides from the fight into the save, such as the frame the match was decided on. Report the winner only once `session.confirmedFrame` reaches that frame: a guess can decide a fight that a late input then undoes, and phones that disagree end the match as a desync. `ToyMatch` in `packages/netcode` shows the pattern.
+4. On a replayed frame (`replay` true), skip sounds and effects that the first run already played for that frame, but play new ones, such as a hit the guess missed.
+5. Draw once per animation frame after `update()`, not inside `simulate`, so a rewind is never seen.
 
 ## Services
 
@@ -120,6 +132,6 @@ Every call to Meta's Model API goes through the gateway, never straight from a p
 - **Accounts and the cloud move library.** Sign-in; moves and loadouts stored per player, so a cleared browser loses nothing.
 - **Move validation and signing.** Re-check speed caps and bone lengths, then sign each move so clients can't edit move data.
 - **Quick match.** Pair strangers on skill rating and ping, with more relay regions as players spread out.
-- **Rollback netcode.** Replaces input delay in the netcode client; the relay itself doesn't change.
+- **Rollback netcode.** Built (see Progress). It runs alongside input delay and is picked per match; the relay only sets the input delay and passes a once-a-second sync message.
 - **Photo arena pipeline.** Photo, then SAM 3.1 (floor, ledges, people), the privacy pass (remove people; blur faces, plates and screens), a Muse Image ink restyle, and finally an arena file. Friends-only sharing; under 2 minutes end to end.
 - **Moderation, reports and blocks.** Muse Spark checks nicknames and taunt clips; reports are stored and blocks enforced.

@@ -71,14 +71,17 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 | join | Phone | room, nickname, clientVersion | Relay adds the player and replies with their player number and whether they host, or an error |
 | loadout | Phone | moves | Relay passes it to the other player |
 | arena | Host | arenaId | Relay passes it on |
-| ready | Phone | None | When both are ready, the relay sends start |
-| start | Relay | seed, inputDelay, startFrame | Both phones begin on the same frame |
+| ready | Phone | rollback (optional, launch) | When both are ready, the relay sends start |
+| start | Relay | seed, inputDelay, startFrame, fighters, arenaId, rollback | Both phones begin on the same frame |
 | input | Phone | frame, buttons | Relay passes it on immediately |
 | hash | Phone | frame, stateHash | Sent every 60 frames; a mismatch ends the match as a desync |
+| sync | Phone | lateness | Rollback matches only: relay passes it on; the phone running ahead slows down |
 | end | Phone | winner | Relay closes the match; stats go to the AI gateway separately |
 | ping and pong | Both | time | Measures round-trip time |
 
 **Buttons** are a 9-bit field: 4 bits for the stick direction, 5 for L, H, S, D and Block. **Input delay** is 3 frames (50 ms) when ping is under 80 ms and up to 6 frames above that, set once at start.
+
+**Rollback (launch, MP-6)** is used for a match only when both phones send `rollback: true` with ready; `start` then has `rollback: 8`. Input delay drops to 2 frames (33 ms), and grows only past about 260 ms between the phones, so a phone never rewinds more than 8 frames. A phone plays frames on a guess of the opponent's input and replays them when the real input differs. It sends a state hash only once that frame's inputs are final, and reports the winner only once the deciding frame is final.
 
 ### HTTP API
 
