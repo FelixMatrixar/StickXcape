@@ -2007,6 +2007,7 @@ input[type='range'].slider {
 }
 
 .results-side {
+  margin-top: 46px;
   flex: 1 1 58%;
   min-width: 0;
   display: flex;
@@ -2300,6 +2301,19 @@ input[type='range'].slider {
 }
 
 /* Room. */
+.room .room-col:last-child,
+.studio-panel > :first-child {
+  padding-top: 0;
+}
+
+.room .room-col:last-child {
+  margin-top: 46px;
+}
+
+.studio-panel > :first-child {
+  padding-right: 96px;
+}
+
 .room {
   gap: clamp(14px, 3vw, 30px);
 }
@@ -2401,7 +2415,7 @@ input[type='range'].slider {
 .arena-card {
   position: relative;
   overflow: hidden;
-  min-height: 92px;
+  min-height: clamp(92px, 26vh, 190px);
   padding: 10px;
   display: flex;
   flex-direction: column;

@@ -85,7 +85,7 @@ export function resultsScreen(result: FightResult, actions: ResultsActions): Scr
   const side = h('div', { class: 'results-side' }, statsCard, tips, actionRow);
   const el = h('section', { class: 'results' }, hero, side);
 
-  const preview = new MovePreview(heroCanvas, { ink: config.inks[winnerIndex], background: '#24201c', floor: 'rgba(255,255,255,0.12)', span: 2.5, rest: 0.1, outline: 'rgba(255,250,240,0.9)' });
+  const preview = new MovePreview(heroCanvas, { ink: config.inks[winnerIndex], background: '#24201c', floor: 'rgba(255,255,255,0.12)', span: 3.1, rest: 0.1, outline: 'rgba(255,250,240,0.9)' });
   const victory = sim.fighters[winnerIndex].moves.find((m) => m.slot === 'victory');
   const victoryFile = config.loadouts[winnerIndex].find((m) => m.id === victory?.id) ?? null;
   preview.setMove(victoryFile);
