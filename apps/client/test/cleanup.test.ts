@@ -2,8 +2,8 @@ import { decodeFrames, FRAME_VALUES, parseMoveFile } from '@sticxcape/shared';
 import { describe, expect, it } from 'vitest';
 import { DEMO_ASPECT, demoTake } from '../src/capture/demo.ts';
 import { FightSim } from '../src/engine/sim.ts';
-import { analyse, cleanCapture, encodeMove, floatJoints, prepareFrames, prepareIdle } from '../src/moves/cleanup.ts';
-import { A0, J, JOINT_COUNT } from '../src/engine/skeleton.ts';
+import { analyse, clampPose, cleanCapture, encodeMove, floatJoints, prepareFrames, prepareIdle } from '../src/moves/cleanup.ts';
+import { A0, J, JOINT_COUNT, POSE_SIZE } from '../src/engine/skeleton.ts';
 import { defaultMoves } from '../src/moves/defaults.ts';
 import { uuid, withHashSync } from '../src/moves/hash.ts';
 import { LOADOUT_KEYS } from '../src/moves/loadout.ts';
@@ -87,5 +87,46 @@ describe('physics check, half speed and idle stances', () => {
     floatJoints(frames[frames.length - 1], b);
     const gap = Math.hypot(a[2 * J.rWrist] - b[2 * J.rWrist], a[2 * J.rWrist + 1] - b[2 * J.rWrist + 1]);
     expect(gap).toBeLessThan(0.12);
+  });
+
+  const DEG = Math.PI / 180;
+  const wrapDeg = (a: number) => Math.atan2(Math.sin(a), Math.cos(a)) / DEG;
+
+  it('keeps every built-in move inside human limits, frame by frame', () => {
+    for (const move of defaultMoves()) {
+      const values = decodeFrames(move.frames)!;
+      for (let f = 0; f < values.length / FRAME_VALUES; f++) {
+        const pose = new Float64Array(POSE_SIZE);
+        for (let i = 0; i < POSE_SIZE; i++) pose[i] = i < A0 ? values[f * FRAME_VALUES + i] / 1000 : (values[f * FRAME_VALUES + i] / 65536) * Math.PI * 2;
+        expect(clampPose(pose), `${move.name}, frame ${f}`).toBe(false);
+      }
+    }
+  });
+
+  it('stops an elbow folded past 180° at the full bend, never flipped to the far limit', () => {
+    for (const fold of [-178, -186, -195, -205]) {
+      const pose = new Float64Array(POSE_SIZE);
+      pose[A0 + J.neck] = Math.PI;
+      pose[A0 + J.rWrist] = fold * DEG;
+      expect(clampPose(pose)).toBe(fold < -170.5);
+      expect(wrapDeg(pose[A0 + J.rWrist])).toBeCloseTo(-170, 3);
+    }
+    // Bent the wrong way by a lot: the nearer limit is straight-ish, not the full bend.
+    const pose = new Float64Array(POSE_SIZE);
+    pose[A0 + J.lWrist] = 70 * DEG;
+    clampPose(pose);
+    expect(wrapDeg(pose[A0 + J.lWrist])).toBeCloseTo(30, 3);
+  });
+
+  it('cleans every demo take without a joint left past its limits', () => {
+    for (const move of defaultMoves()) {
+      const clean = cleanCapture(demoTake(move), DEMO_ASPECT);
+      for (const pose of clean.frames) {
+        for (const joint of [J.lWrist, J.rWrist]) {
+          expect(wrapDeg(pose[A0 + joint])).toBeGreaterThanOrEqual(-170.5);
+          expect(wrapDeg(pose[A0 + joint])).toBeLessThanOrEqual(30.5);
+        }
+      }
+    }
   });
 });

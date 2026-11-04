@@ -197,6 +197,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     } catch (err) {
       stopCamera();
       const message = err instanceof CameraError ? err.message : 'The body tracker couldn’t load. Check your connection.';
+      const hint = stage.querySelector('.stage-hint span');
+      if (hint) hint.textContent = 'No camera. A demo take still works.';
       renderSetup(null, message);
     }
   }
@@ -608,7 +610,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       else void startCamera();
     });
     if (takes.length >= MAX_TAKES) retake.disabled = true;
-    const save = press(h('button', { class: 'btn btn-primary' }, svg(ICON.check), 'Save move'), () => void saveMove(), { sound: 'none' });
+    const idle = place.key === 'idle';
+    const save = press(h('button', { class: 'btn btn-primary' }, svg(ICON.check), idle ? 'Save stance' : 'Save move'), () => void saveMove(), { sound: 'none' });
 
     panel.replaceChildren(
       h('div', { style: 'display:flex;align-items:center;gap:12px' }, press(h('button', { class: 'btn btn-icon', attrs: { 'aria-label': 'Back to slots' } }, svg(ICON.back)), () => showSlots(), { sound: 'back' }), h('div', null, h('div', { class: 'kicker', text: `${place.label} · Review` }), h('h2', { text: 'Your stick man' }))),
@@ -616,8 +619,13 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       h('div', { class: 'field' }, h('div', { style: 'display:flex;justify-content:space-between' }, h('span', { class: 'field-label', text: 'Capture quality' }), h('span', { class: 'kicker', text: `${Math.round(quality * 100)}%` })), meter, tip ? h('span', { class: 'muted', style: 'font-size:12px', text: tip }) : null),
       h('div', { class: 'status-line' }, h('i', { class: 'light is-good' }), take.clean.corrected > 0 ? `Physics check: fixed ${take.clean.corrected} frames past human limits` : 'Physics check: every joint within human limits'),
       h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Trim' }), trimEl),
-      h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Mirror left and right' }), mirrorSwitch),
-      h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Speed' }), h('div', { style: 'display:flex;align-items:center;gap:8px;flex:1;max-width:200px' }, speedInput, speedLabel)),
+      // An idle stance loops in place: mirror and speed don't apply.
+      ...(idle
+        ? []
+        : [
+            h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Mirror left and right' }), mirrorSwitch),
+            h('div', { class: 'setting', style: 'padding:4px 0' }, h('span', { class: 'setting-title', text: 'Speed' }), h('div', { style: 'display:flex;align-items:center;gap:8px;flex:1;max-width:200px' }, speedInput, speedLabel)),
+          ]),
       h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), nameWrap),
       h('div', { class: 'actions' }, save, retake),
     );

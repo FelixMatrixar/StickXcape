@@ -474,45 +474,64 @@ const LIMITS: [number, number, number][] = [
   [J.rAnkle, -25, 165],
   [J.lWrist, -170, 30],
   [J.rWrist, -170, 30],
-  [J.lToe, -150, -15],
-  [J.rToe, -150, -15],
+  [J.lToe, -150, 25],
+  [J.rToe, -150, 25],
   [J.head, -80, 80],
 ];
-/** Hip: the thigh's angle from the spine, 15° (folded) to 235° (leg swept back). */
+/** Hip: the thigh's angle from the spine line, 15° (folded) to 250° (leg swept back; a lean-back bends the lower back too). */
 const HIP_MIN = 15 * RAD;
-const HIP_MAX = 235 * RAD;
+const HIP_MAX = 250 * RAD;
 
 function wrapPi(a: number): number {
   return a - Math.round(a / TAU) * TAU;
+}
+
+function wrapTau(a: number): number {
+  return ((a % TAU) + TAU) % TAU;
+}
+
+/**
+ * Clamps an angle into [lo, hi], stopping at whichever limit is nearer around the circle. An elbow
+ * folded just past 180° wraps to a positive angle; it belongs on the full-bend limit, not flipped
+ * to the far one.
+ */
+function clampAngle(a: number, lo: number, hi: number): number {
+  const w = wrapPi(a);
+  if (w >= lo && w <= hi) return w;
+  return wrapTau(w - hi) <= wrapTau(lo - w) ? hi : lo;
+}
+
+/** Bends any joint past human limits back to the nearer limit (MS-10). True if anything moved. */
+export function clampPose(pose: FloatPose): boolean {
+  let changed = false;
+  for (const [joint, lo, hi] of LIMITS) {
+    const a = wrapPi(pose[A0 + joint]);
+    const c = clampAngle(a, lo * RAD, hi * RAD);
+    if (Math.abs(c - a) > 0.5 * RAD) changed = true;
+    pose[A0 + joint] = c;
+  }
+  for (const knee of [J.lKnee, J.rKnee]) {
+    const spine = pose[A0 + J.neck] + pose[A0 + J.pelvis];
+    const thigh = pose[A0 + J.pelvis] + pose[A0 + (knee === J.lKnee ? J.lHip : J.rHip)] + pose[A0 + knee];
+    let d = (thigh - spine) % TAU;
+    if (d < 0) d += TAU;
+    if (d >= HIP_MIN && d <= HIP_MAX) continue;
+    const target = d > HIP_MAX && d < HIP_MAX + (TAU - HIP_MAX + HIP_MIN) / 2 ? HIP_MAX : HIP_MIN;
+    pose[A0 + knee] += target - d;
+    changed = true;
+  }
+  return changed;
 }
 
 /** Clamps joints past human limits; returns how many frames needed it. */
 function clampJoints(frames: FloatPose[], scratch: Float64Array): number {
   let fixed = 0;
   for (const pose of frames) {
-    let changed = false;
-    for (const [joint, lo, hi] of LIMITS) {
-      const a = wrapPi(pose[A0 + joint]);
-      const c = Math.max(lo * RAD, Math.min(hi * RAD, a));
-      if (Math.abs(c - a) > 0.5 * RAD) changed = true;
-      pose[A0 + joint] = c;
-    }
-    for (const knee of [J.lKnee, J.rKnee]) {
-      const spine = pose[A0 + J.neck] + pose[A0 + J.pelvis];
-      const thigh = pose[A0 + J.pelvis] + pose[A0 + (knee === J.lKnee ? J.lHip : J.rHip)] + pose[A0 + knee];
-      let d = (thigh - spine) % TAU;
-      if (d < 0) d += TAU;
-      if (d >= HIP_MIN && d <= HIP_MAX) continue;
-      const target = d > HIP_MAX && d < HIP_MAX + (TAU - HIP_MAX + HIP_MIN) / 2 ? HIP_MAX : HIP_MIN;
-      pose[A0 + knee] += target - d;
-      changed = true;
-    }
-    if (changed) {
-      fixed += 1;
-      // The feet may have moved: keep them on the floor.
-      const low = lowestFootF(pose, scratch);
-      if (pose[1] + low < 0) pose[1] = -low;
-    }
+    if (!clampPose(pose)) continue;
+    fixed += 1;
+    // The feet may have moved: keep them on the floor.
+    const low = lowestFootF(pose, scratch);
+    if (pose[1] + low < 0) pose[1] = -low;
   }
   return fixed;
 }
