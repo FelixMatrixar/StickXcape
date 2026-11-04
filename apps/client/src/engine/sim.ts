@@ -424,6 +424,29 @@ export class FightSim {
     return this.phase === PHASE.ko && this.phaseT < KO_HOLD_FRAMES && f.state !== S.ko;
   }
 
+  /**
+   * Saves everything that decides the rest of the fight, for rollback netcode (MP-6): rewind to a
+   * confirmed frame, then re-run it with the inputs that arrived late. The save shares nothing
+   * with the fight, so it can be loaded any number of times.
+   */
+  save(): SimSnapshot {
+    return {
+      sim: saveFields(this, SIM_FIXED),
+      fighters: [saveFields(this.fighters[0], FIGHTER_FIXED), saveFields(this.fighters[1], FIGHTER_FIXED)],
+    };
+  }
+
+  /**
+   * Rewinds to a save from this fight, or from one built with the same options. Events are
+   * cleared: each re-run frame reports its own, and the renderer decides what to show again.
+   */
+  load(snapshot: SimSnapshot): void {
+    loadFields(this, snapshot.sim);
+    loadFields(this.fighters[0], snapshot.fighters[0]);
+    loadFields(this.fighters[1], snapshot.fighters[1]);
+    this.events.length = 0;
+  }
+
   /** Unsigned 32-bit hash of everything that decides the fight, sent to the relay every 60 frames. */
   hash(): number {
     const values: number[] = [this.frame, this.phase, this.phaseT, this.timer, this.hitstop, this.round, this.rng.state | 0, this.ringoutSide];
@@ -1554,6 +1577,51 @@ const PUSHED = new Set<number>([S.hitstun, S.launched, S.blockstun, S.stagger, S
 const NO_PUSH = new Set<number>([S.roll, S.thrown, S.throw]);
 /** On a ledge, these stop at its end (like a move's root motion); walking, dashing and being hit can carry you off. */
 const STAY_ON_LEDGE = new Set<number>([S.attack, S.roll, S.getup, S.land, S.jumpsquat, S.grab, S.throw, S.victory]);
+
+// Save and load (MP-6).
+
+/** A saved moment of a fight: plain data, see FightSim.save. */
+export interface SimSnapshot {
+  readonly sim: Readonly<Record<string, unknown>>;
+  readonly fighters: readonly [Readonly<Record<string, unknown>>, Readonly<Record<string, unknown>>];
+}
+
+/** Set when the fight is built and never changed, or scratch space within a frame: not saved. */
+const SIM_FIXED = new Set(['fighters', 'arenaWidth', 'spawns', 'dropLeft', 'dropRight', 'ledges', 'events', 'target', 'joints', 'pending']);
+const FIGHTER_FIXED = new Set(['side', 'moves', 'slots']);
+
+/**
+ * Copies every other field. Anything of a kind it has no rule for stops the save, so new state
+ * added to the engine can never slip past rollback unnoticed.
+ */
+function saveFields(source: object, fixed: ReadonlySet<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (fixed.has(key)) continue;
+    if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+    else if (value instanceof Int32Array) out[key] = value.slice();
+    else if (value instanceof Rng) out[key] = value.state;
+    else if (Array.isArray(value) && value.every(isNumberRecord)) out[key] = value.map((item: object) => ({ ...item }));
+    else throw new Error(`FightSim.save has no rule for "${key}"`);
+  }
+  return out;
+}
+
+/** Copies saved values back in place, keeping the fight's own arrays and objects. */
+function loadFields(target: object, saved: Readonly<Record<string, unknown>>): void {
+  const fields = target as Record<string, unknown>;
+  for (const [key, value] of Object.entries(saved)) {
+    const current = fields[key];
+    if (current instanceof Int32Array) current.set(value as Int32Array);
+    else if (current instanceof Rng) current.state = value as number;
+    else if (Array.isArray(current)) (value as object[]).forEach((item, i) => Object.assign(current[i] as object, item));
+    else fields[key] = value;
+  }
+}
+
+function isNumberRecord(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && Object.values(value).every((v) => typeof v === 'number');
+}
 
 /** Distance from point p to segment ab; out receives the closest point and t (0..ONE). */
 function closest(px: number, py: number, ax: number, ay: number, bx: number, by: number, out: Int32Array): number {
