@@ -41,6 +41,9 @@ export const flow = {
     music.play('menu');
     if (!settings.nickname || !settings.onboarded) {
       void show(() => nicknameScreen(() => flow.onboarding(), { step: 'Step 1 of 2' }));
+    } else if (!settings.ageConfirmed) {
+      // Players from before the 13+ check confirm once, then carry on.
+      void show(() => nicknameScreen(() => flow.afterTitle(), { step: 'Before you play' }));
     } else if (invite) {
       flow.room(invite);
     } else {
