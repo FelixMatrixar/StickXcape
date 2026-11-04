@@ -134,11 +134,14 @@ export class Relay {
       case 'arena':
         return hub.setArena(player, message.arenaId);
       case 'ready':
+        conn.rollback = message.rollback === true;
         return hub.setReady(player);
       case 'input':
         return hub.input(player, message.frame, message.buttons);
       case 'hash':
         return hub.hash(player, message.frame, message.stateHash);
+      case 'sync':
+        return hub.sync(player, message.lateness);
       case 'end':
         return hub.end(player, message.winner);
     }

@@ -44,7 +44,7 @@ export const DASHBOARD_HTML = `<!doctype html>
       document.getElementById('matches').innerHTML =
         tile('started', m.started) + tile('finished', m.finished) + tile('finish rate', pct(m.finishRate)) +
         tile('desyncs', m.desyncs, m.desyncs > 0) + tile('desync rate', pct(m.desyncRate), m.desyncRate > 0) +
-        tile('disconnects', m.disconnects) + tile('playing now', m.active);
+        tile('disconnects', m.disconnects) + tile('playing now', m.active) + tile('with rollback', m.rollback);
       document.getElementById('relay').innerHTML =
         tile('rooms open', s.rooms.active) + tile('rooms created', s.rooms.created) + tile('phones connected', s.players) +
         tile('round trip p50', ms(r.rttMs.p50)) + tile('round trip p95', ms(r.rttMs.p95)) +

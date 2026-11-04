@@ -1,5 +1,5 @@
 import { CLIENT_VERSION, type ErrorCode, type MatchEndMessage, type MoveFile, type RoomInfo, type ServerMessage } from '@sticxcape/shared';
-import { LockstepSession } from './lockstep.ts';
+import { MatchSession } from './session.ts';
 import type { RelayTransport } from './transport.ts';
 
 /** An error the relay sent, such as room_not_found or version_mismatch (reload the page). */
@@ -23,7 +23,7 @@ export interface RelayClientEvents {
   room: RoomInfo;
   loadout: { player: number; moves: MoveFile[] };
   arena: string;
-  start: LockstepSession;
+  start: MatchSession;
   end: MatchEndMessage;
   error: RelayError;
   close: string;
@@ -32,13 +32,15 @@ export interface RelayClientEvents {
 export interface RelayClientOptions {
   pingIntervalMs?: number;
   now?: () => number;
+  /** Ask for rollback netcode when getting ready; see `rollback` below. Default false. */
+  rollback?: boolean;
 }
 
 const RTT_SAMPLES = 5;
 
 /**
  * The phone's side of a friend room: join, swap loadouts, pick the arena, get ready, and get a
- * LockstepSession for each match. It answers the relay's pings and measures its own round trip.
+ * MatchSession for each match. It answers the relay's pings and measures its own round trip.
  */
 export class RelayClient {
   readonly transport: RelayTransport;
@@ -48,8 +50,14 @@ export class RelayClient {
   /** The latest loadout received from each other player. */
   readonly loadouts = new Map<number, MoveFile[]>();
   /** The match in progress, if any. */
-  session: LockstepSession | null = null;
+  session: MatchSession | null = null;
   closed = false;
+  /**
+   * True when this game can play with rollback netcode (it runs RollbackDriver, with save and
+   * load). It is sent with each ready; a match uses rollback only when both fighters ask for it,
+   * and its session's `rollback` says which one the relay picked.
+   */
+  rollback: boolean;
 
   private readonly now: () => number;
   private readonly listeners: { [E in keyof RelayClientEvents]?: ((value: RelayClientEvents[E]) => void)[] } = {};
@@ -60,6 +68,7 @@ export class RelayClient {
   constructor(transport: RelayTransport, options: RelayClientOptions = {}) {
     this.transport = transport;
     this.now = options.now ?? (() => performance.now());
+    this.rollback = options.rollback ?? false;
     transport.onMessage((message) => this.handle(message));
     transport.onClose((reason) => {
       this.closed = true;
@@ -108,7 +117,7 @@ export class RelayClient {
   }
 
   ready(): void {
-    this.transport.send({ type: 'ready' });
+    this.transport.send(this.rollback ? { type: 'ready', rollback: true } : { type: 'ready' });
   }
 
   close(): void {
@@ -139,12 +148,13 @@ export class RelayClient {
         return this.emit('arena', message.arenaId);
       case 'start': {
         if (this.player === null) return;
-        const session = new LockstepSession({ localPlayer: this.player, start: message, send: (m) => this.transport.send(m), now: this.now });
+        const session = new MatchSession({ localPlayer: this.player, start: message, send: (m) => this.transport.send(m), now: this.now });
         this.session = session;
         return this.emit('start', session);
       }
       case 'input':
       case 'hash':
+      case 'sync':
         return this.session?.receive(message);
       case 'end':
         this.session?.receive(message);

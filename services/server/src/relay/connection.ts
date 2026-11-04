@@ -15,6 +15,8 @@ export class Connection {
   hub: Hub | null = null;
   player: number | null = null;
   nickname: string | null = null;
+  /** True when the phone's last ready asked for rollback netcode. */
+  rollback = false;
   lastSeen: number;
   /** Messages dropped by the rate cap since the last relay tick. */
   rateDrops = 0;

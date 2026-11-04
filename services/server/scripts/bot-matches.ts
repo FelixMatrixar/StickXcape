@@ -27,8 +27,22 @@ export interface BotMatchOptions {
   jitterMs: number;
   /** Frames before a match goes to whoever has more health. */
   maxFrames: number;
+  /** Both bots ask for rollback netcode instead of input delay. */
+  rollback?: boolean;
   /** Progress lines; silent when left out. */
   log?: (line: string) => void;
+}
+
+/** What rollback did across every match, from each bot's driver. */
+export interface RollbackReport {
+  /** Frames the bots simulated for the first time. */
+  frames: number;
+  /** Times a bot rewound because its guess of the other's input was wrong. */
+  rollbacks: number;
+  /** Frames played again after those rewinds. */
+  replayedFrames: number;
+  /** The most frames any bot rewound at once. */
+  deepest: number;
 }
 
 export interface BotMatchReport {
@@ -38,6 +52,9 @@ export interface BotMatchReport {
   errors: string[];
   /** The input delay the relay picked, per match. */
   inputDelays: number[];
+  /** Matches the relay started with rollback netcode. */
+  rollbackMatches: number;
+  rollback: RollbackReport;
   /** Share of match time the bots spent waiting for the other phone's input. */
   stallShare: number;
   /** Each bot's round trip to the relay, in ms, as it measured it at the end. */
@@ -82,6 +99,8 @@ export async function runBotMatches(options: BotMatchOptions): Promise<BotMatchR
     reasons: Object.fromEntries(END_REASONS.map((reason) => [reason, 0])) as Record<EndReason, number>,
     errors: [],
     inputDelays: [],
+    rollbackMatches: 0,
+    rollback: { frames: 0, rollbacks: 0, replayedFrames: 0, deepest: 0 },
     stallShare: 0,
     rttMs: [],
     seconds: 0,
@@ -101,7 +120,7 @@ async function playRoom(index: number, options: BotMatchOptions, report: BotMatc
   try {
     const { code } = await services.createRoom(`Bot ${index}A`);
     for (const name of [`Bot ${index}A`, `Bot ${index}B`]) {
-      const bot = new RelayClient(await connectWebSocket(services.relayUrl, { latency: botLatency(options) }));
+      const bot = new RelayClient(await connectWebSocket(services.relayUrl, { latency: botLatency(options) }), { rollback: options.rollback ?? false });
       bots.push(bot);
       bot.on('error', (error) => report.errors.push(`room ${index}, ${name}: relay error ${error.code}: ${error.message}`));
       bot.on('close', (reason) => {
@@ -128,6 +147,15 @@ async function playRoom(index: number, options: BotMatchOptions, report: BotMatc
         report.matches += 1;
         report.reasons[end.reason] += 1;
         report.inputDelays.push(sessions[0].inputDelay);
+        if (sessions[0].rollback > 0) report.rollbackMatches += 1;
+        for (const { match } of entries) {
+          const stats = match.rollbackStats;
+          if (!stats) continue;
+          report.rollback.frames += stats.frames;
+          report.rollback.rollbacks += stats.rollbacks;
+          report.rollback.replayedFrames += stats.replayedFrames;
+          report.rollback.deepest = Math.max(report.rollback.deepest, stats.deepest);
+        }
         if (end.reason !== 'finished') report.errors.push(`${where}: ended by ${end.reason}`);
         else if (end.winner !== entries[0]!.match.result || otherEnd.winner !== end.winner) report.errors.push(`${where}: the relay and the bots disagree on the winner`);
         const desync = sessions.find((session) => session.desyncFrame !== null);
@@ -138,7 +166,9 @@ async function playRoom(index: number, options: BotMatchOptions, report: BotMatc
         totals.matchMs += ms;
         totals.stalledMs += (entries[0]!.stalledMs + entries[1]!.stalledMs) / 2;
       }
-      options.log?.(`${where}: ${report.reasons.finished} finished so far, input delay ${sessions[0].inputDelay}, ${entries[0]!.match.sim.frame} frames`);
+      const rollback = entries[0]!.match.rollbackStats;
+      const rollbackText = rollback ? `, ${rollback.rollbacks} rollbacks (deepest ${rollback.deepest} frames)` : '';
+      options.log?.(`${where}: ${report.reasons.finished} finished so far, input delay ${sessions[0].inputDelay}${rollbackText}, ${entries[0]!.match.sim.frame} frames`);
     }
     for (const bot of bots) if (bot.rtt !== null) report.rttMs.push(bot.rtt);
   } catch (err) {

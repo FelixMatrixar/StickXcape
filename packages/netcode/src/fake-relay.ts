@@ -1,8 +1,10 @@
 import {
   cleanText,
+  MAX_ROLLBACK_FRAMES,
   MIN_INPUT_DELAY,
   mirrorButtons,
   NICKNAME_MAX_LENGTH,
+  ROLLBACK_INPUT_DELAY,
   type ClientMessage,
   type MoveFile,
   type RoomInfo,
@@ -13,9 +15,13 @@ import type { RelayTransport } from './transport.ts';
 export interface FakeRelayOptions {
   /** The echo opponent mirrors left and right, so it walks toward you as you walk toward it. Default true. */
   mirror?: boolean;
-  /** Delay before each reply, to feel like a network. Keep it under the input delay for smooth play. */
+  /**
+   * Delay before each reply, to feel like a network. Keep it under the input delay for smooth
+   * play; in a rollback match a longer delay makes Echo's inputs late, so the game rewinds.
+   */
   latencyMs?: number;
   opponentName?: string;
+  /** Default 3 frames, or 2 in a rollback match (when the client asks for rollback). */
   inputDelay?: number;
   seed?: number;
 }
@@ -26,7 +32,7 @@ export interface FakeRelayOptions {
  * back your own inputs. Use it anywhere a RelayTransport goes: `new RelayClient(createFakeRelay())`.
  */
 export function createFakeRelay(options: FakeRelayOptions = {}): RelayTransport {
-  const { mirror = true, latencyMs = 0, opponentName = 'Echo', inputDelay = MIN_INPUT_DELAY } = options;
+  const { mirror = true, latencyMs = 0, opponentName = 'Echo' } = options;
   let messageHandler: ((message: ServerMessage) => void) | null = null;
   let closeHandler: (reason: string) => void = () => {};
   const early: ServerMessage[] = [];
@@ -74,7 +80,15 @@ export function createFakeRelay(options: FakeRelayOptions = {}): RelayTransport 
           if (!moves) return deliver({ type: 'error', code: 'no_loadout', message: 'Send a loadout before getting ready' });
           ready = true;
           inMatch = true;
-          deliver({ type: 'start', seed: options.seed ?? Math.floor(Math.random() * 0x100000000), inputDelay, startFrame: 0, fighters: [1, 2], arenaId });
+          deliver({
+            type: 'start',
+            seed: options.seed ?? Math.floor(Math.random() * 0x100000000),
+            inputDelay: options.inputDelay ?? (message.rollback ? ROLLBACK_INPUT_DELAY : MIN_INPUT_DELAY),
+            startFrame: 0,
+            fighters: [1, 2],
+            arenaId,
+            rollback: message.rollback ? MAX_ROLLBACK_FRAMES : 0,
+          });
           return deliver({ type: 'room', room: room() });
         case 'input':
           return deliver({ type: 'input', frame: message.frame, buttons: mirror ? mirrorButtons(message.buttons) : message.buttons });
@@ -89,6 +103,8 @@ export function createFakeRelay(options: FakeRelayOptions = {}): RelayTransport 
         case 'ping':
           return deliver({ type: 'pong', time: message.time });
         case 'pong':
+        // Echo replays your own inputs, so it has no clock of its own to keep in step with.
+        case 'sync':
           return;
       }
     },

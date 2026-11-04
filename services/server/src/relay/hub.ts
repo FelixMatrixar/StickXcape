@@ -2,6 +2,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import {
   FRAME_MS,
   inputDelayForPing,
+  MAX_ROLLBACK_FRAMES,
+  rollbackInputDelayForPing,
   type EndReason,
   type ErrorCode,
   type MoveFile,
@@ -29,6 +31,8 @@ interface Match {
   fighters: [number, number];
   startFrame: number;
   inputDelay: number;
+  /** Frames of rollback; 0 for an input-delay match. */
+  rollback: number;
   startedAt: number;
   /** The next input frame expected from each fighter: inputs arrive in order with no gaps. */
   nextInput: [number, number];
@@ -185,6 +189,14 @@ export class Hub {
     }
   }
 
+  /** Rollback matches: passes a fighter's sync report to the other, who uses it to keep in step. */
+  sync(player: number, lateness: number): void {
+    const match = this.match;
+    const side = this.sideOf(player);
+    if (!match || side === null || match.rollback === 0) return this.drop('not_in_match');
+    this.conns.get(match.fighters[other(side)])?.send({ type: 'sync', lateness });
+  }
+
   end(player: number, winner: number | null): void {
     const match = this.match;
     const side = this.sideOf(player);
@@ -302,13 +314,16 @@ export class Hub {
     if (!connA || !connB) return;
     const { defaultRttMs } = this.ctx.config;
     const pingMs = (connA.rtt() ?? defaultRttMs) + (connB.rtt() ?? defaultRttMs);
-    const inputDelay = inputDelayForPing(pingMs);
+    // Rollback needs both phones to run it; otherwise both wait for each other's inputs.
+    const rollback = connA.rollback && connB.rollback ? MAX_ROLLBACK_FRAMES : 0;
+    const inputDelay = rollback > 0 ? rollbackInputDelayForPing(pingMs) : inputDelayForPing(pingMs);
     const now = this.ctx.now();
     const startFrame = 0;
     this.match = {
       fighters: [a, b],
       startFrame,
       inputDelay,
+      rollback,
       startedAt: now,
       nextInput: [startFrame + inputDelay, startFrame + inputDelay],
       lastInputAt: [now, now],
@@ -317,11 +332,11 @@ export class Hub {
       endTimer: null,
     };
     this.room.inMatch = true;
-    const start: StartMessage = { type: 'start', seed: newSeed(), inputDelay, startFrame, fighters: [a, b], arenaId: this.room.arenaId };
+    const start: StartMessage = { type: 'start', seed: newSeed(), inputDelay, startFrame, fighters: [a, b], arenaId: this.room.arenaId, rollback };
     connA.send(start);
     connB.send(start);
-    this.ctx.metrics.matchesStarted.inc();
-    this.ctx.log.info({ room: this.room.code, fighters: [connA.nickname, connB.nickname], pingMs, inputDelay }, 'match started');
+    this.ctx.metrics.matchesStarted.inc({ netcode: rollback > 0 ? 'rollback' : 'delay' });
+    this.ctx.log.info({ room: this.room.code, fighters: [connA.nickname, connB.nickname], pingMs, inputDelay, rollback }, 'match started');
     this.broadcastRoom();
   }
 

@@ -11,6 +11,7 @@ import {
   isHashFrame,
   isRoomCode,
   KEYFRAME_MAX_CHARS,
+  MAX_ROLLBACK_FRAMES,
   mirrorButtons,
   MOVE_FORMAT_VERSION,
   packButtons,
@@ -18,6 +19,8 @@ import {
   parseMatchTipsRequest,
   parseMoveNameRequest,
   parseServerMessage,
+  rollbackInputDelayForPing,
+  ROLLBACK_INPUT_DELAY,
   roomCodeFromPath,
   roomLink,
   unpackButtons,
@@ -70,6 +73,18 @@ describe('input delay rule', () => {
   it('assumes the worst for a ping it cannot read', () => {
     expect(inputDelayForPing(Number.NaN)).toBe(6);
     expect(inputDelayForPing(-5)).toBe(6);
+    expect(rollbackInputDelayForPing(Number.NaN)).toBe(6);
+  });
+
+  it('keeps rollback matches at 2 frames until a phone would rewind more than 8', () => {
+    expect([ROLLBACK_INPUT_DELAY, MAX_ROLLBACK_FRAMES]).toEqual([2, 8]);
+    expect(rollbackInputDelayForPing(0)).toBe(2);
+    expect(rollbackInputDelayForPing(100)).toBe(2);
+    // The opponent's inputs arrive 8 frames late (one way, plus 2 for jitter) at about 260 ms.
+    expect(rollbackInputDelayForPing(266)).toBe(2);
+    expect(rollbackInputDelayForPing(300)).toBe(3);
+    expect(rollbackInputDelayForPing(400)).toBe(6);
+    expect(rollbackInputDelayForPing(1000)).toBe(6);
   });
 
   it('hashes every 60 frames from frame 0', () => {
@@ -156,6 +171,11 @@ describe('parseClientMessage', () => {
 
   it('checks the lobby messages', async () => {
     expect(parse({ type: 'ready', anything: 1 })).toEqual({ type: 'ready' });
+    expect(parse({ type: 'ready', rollback: true })).toEqual({ type: 'ready', rollback: true });
+    expect(parse({ type: 'ready', rollback: 'yes' })).toEqual({ type: 'ready' });
+    expect(parse({ type: 'sync', lateness: -2.5 })).toEqual({ type: 'sync', lateness: -2.5 });
+    expect(parse({ type: 'sync', lateness: 601 })).toBeNull();
+    expect(parse({ type: 'sync', lateness: '1' })).toBeNull();
     expect(parse({ type: 'arena', arenaId: 'rooftop-2' })).toEqual({ type: 'arena', arenaId: 'rooftop-2' });
     expect(parse({ type: 'arena', arenaId: 'Rooftop' })).toBeNull();
     expect(parse({ type: 'end', winner: null })).toEqual({ type: 'end', winner: null });
@@ -174,6 +194,7 @@ describe('parseClientMessage', () => {
 describe('parseServerMessage', () => {
   it('checks only the type', () => {
     expect(parseServerMessage('{"type":"joined","player":1}')).toEqual({ type: 'joined', player: 1 });
+    expect(parseServerMessage('{"type":"sync","lateness":1.5}')).toEqual({ type: 'sync', lateness: 1.5 });
     expect(parseServerMessage('{"type":"join"}')).toBeNull();
     expect(parseServerMessage('nope')).toBeNull();
   });

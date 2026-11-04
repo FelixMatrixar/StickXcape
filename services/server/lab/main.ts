@@ -1,7 +1,7 @@
 /**
  * The relay lab: a toy match between two phones through the real relay, for the week 2 check
- * before the fight engine exists. It uses the game's own netcode (RelayClient, LockstepSession,
- * LockstepDriver) with ToySim standing in for the fight.
+ * before the fight engine exists. It uses the game's own netcode (RelayClient, MatchSession, and
+ * LockstepDriver or RollbackDriver) with ToySim standing in for the fight.
  */
 import {
   connectWebSocket,
@@ -11,7 +11,7 @@ import {
   ToyMatch,
   toyBotInput,
   toyLoadout,
-  type LockstepSession,
+  type MatchSession,
   type ToySim,
 } from '@sticxcape/netcode';
 import { Button, FRAME_MS, fromFixed, isRoomCode, type ButtonName, type MatchEndMessage, type RoomInfo } from '@sticxcape/shared';
@@ -23,10 +23,12 @@ const nicknameInput = $<HTMLInputElement>('nickname');
 const enterButton = $<HTMLButtonElement>('enter');
 const readyButton = $<HTMLButtonElement>('ready');
 const autoInput = $<HTMLInputElement>('auto');
+const rollbackInput = $<HTMLInputElement>('rollback');
 const canvas = $<HTMLCanvasElement>('stage');
 const ctx = canvas.getContext('2d')!;
 
 const NICKNAME_KEY = 'sticxcape.nickname';
+const ROLLBACK_KEY = 'sticxcape.lab.rollback';
 
 function load(key: string): string | null {
   try {
@@ -46,6 +48,8 @@ function save(key: string, value: string): void {
 
 nicknameInput.value = load(NICKNAME_KEY) || `Player ${10 + Math.floor(Math.random() * 90)}`;
 nicknameInput.addEventListener('change', () => save(NICKNAME_KEY, nicknameInput.value.trim()));
+rollbackInput.checked = load(ROLLBACK_KEY) === '1';
+rollbackInput.addEventListener('change', () => save(ROLLBACK_KEY, rollbackInput.checked ? '1' : '0'));
 
 // Home: create a room, or join the one in the link.
 
@@ -144,6 +148,8 @@ async function shareLink(link: string): Promise<void> {
 readyButton.addEventListener('click', () => {
   if (!client) return;
   readyPressed = true;
+  // The relay uses rollback only when both fighters ask; the Rollback stat shows what it picked.
+  client.rollback = rollbackInput.checked;
   client.ready();
   renderRoom();
 });
@@ -197,7 +203,7 @@ function setStatus(text: string, bad = false): void {
 
 // The match.
 
-function startMatch(session: LockstepSession): void {
+function startMatch(session: MatchSession): void {
   const bot = toyBotInput(session.seed ^ session.localPlayer);
   const state: CurrentMatch = {
     match: new ToyMatch(session, { input: (sim, side) => (autoInput.checked ? bot(sim, side) : heldButtons()) }),
@@ -414,11 +420,14 @@ function updateStats(now: number): void {
   const { match, startedAt, stalledMs, desyncFrame, end } = current;
   const delay = match.session.inputDelay;
   setStat('s-delay', `${delay} frames (${Math.round(delay * FRAME_MS)} ms)`);
+  const rollback = match.rollbackStats;
+  setStat('s-rollback', rollback ? `${rollback.rollbacks} rewinds, deepest ${rollback.deepest} frames` : 'Off');
   setStat('s-frame', String(match.sim.frame));
   const elapsed = startedAt === null ? 0 : now - startedAt;
   setStat('s-wait', elapsed > 0 ? `${(stalledMs / 1000).toFixed(1)} s (${((stalledMs / elapsed) * 100).toFixed(1)}%)` : '–');
-  // Hashes go out after frames 0, 60, 120 and so on; session.frame is the next frame to simulate.
-  const checks = Math.ceil(match.session.frame / 60);
+  // Hashes go out after frames 0, 60, 120 and so on, once the frame is final.
+  const lastFinal = Math.min(match.session.frame - 1, match.session.confirmedFrame);
+  const checks = lastFinal < 0 ? 0 : Math.floor(lastFinal / 60) + 1;
   if (desyncFrame !== null) setStat('s-hash', `Desync at frame ${desyncFrame}`, 'bad');
   else setStat('s-hash', checks > 0 ? `${checks} sent, all matching` : '–', checks > 0 ? 'good' : '');
   setStat('s-result', end ? resultText(end) : 'Playing', end ? (end.reason === 'finished' ? 'good' : 'bad') : '');

@@ -1,5 +1,5 @@
 import { FRAME_MS, isHashFrame } from '@sticxcape/shared';
-import type { LockstepSession } from './lockstep.ts';
+import type { MatchSession } from './session.ts';
 
 /** What the fight engine plugs into the driver. */
 export interface DriverHooks {
@@ -16,19 +16,19 @@ const MAX_CATCH_UP_MS = 250;
 const MAX_STEPS_PER_UPDATE = 4;
 
 /**
- * Runs a LockstepSession at a fixed 60 Hz from requestAnimationFrame. It catches up after a
+ * Runs an input-delay match at a fixed 60 Hz from requestAnimationFrame. It catches up after a
  * slow frame, but never banks time while waiting for the opponent, so it never bursts a
- * backlog of inputs at the relay.
+ * backlog of inputs at the relay. Rollback matches use RollbackDriver instead.
  */
 export class LockstepDriver {
   /** True while the last update was waiting for the opponent's input. */
   stalled = false;
-  private readonly session: LockstepSession;
+  private readonly session: MatchSession;
   private readonly hooks: DriverHooks;
   private last: number | null = null;
   private accumulator = 0;
 
-  constructor(session: LockstepSession, hooks: DriverHooks) {
+  constructor(session: MatchSession, hooks: DriverHooks) {
     this.session = session;
     this.hooks = hooks;
   }

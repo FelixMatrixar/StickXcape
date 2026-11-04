@@ -38,7 +38,7 @@ export function createMetrics() {
   return {
     registry,
     roomsCreated: registry.counter('sticxcape_rooms_created_total', 'Rooms created'),
-    matchesStarted: registry.counter('sticxcape_matches_started_total', 'Matches started'),
+    matchesStarted: registry.counter<'netcode'>('sticxcape_matches_started_total', 'Matches started, by netcode (delay or rollback)', ['netcode']),
     matchesEnded: registry.counter<'reason'>('sticxcape_matches_ended_total', 'Matches ended, by reason (finished, desync, disconnect, room_closed)', [
       'reason',
     ]),

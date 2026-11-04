@@ -42,7 +42,7 @@ export function statsSnapshot({ config, metrics, rooms, relay, ai, alert }: Moni
   const desyncs = ended('desync');
   const disconnects = ended('disconnect');
   const roomsClosed = ended('room_closed');
-  const started = metrics.matchesStarted.get();
+  const started = metrics.matchesStarted.sum();
   const { samples } = metrics;
 
   const aiCall = (call: AiCall) => {
@@ -70,6 +70,7 @@ export function statsSnapshot({ config, metrics, rooms, relay, ai, alert }: Moni
     matches: {
       active: relay.matchCount,
       started,
+      rollback: metrics.matchesStarted.get({ netcode: 'rollback' }),
       finished,
       desyncs,
       disconnects,

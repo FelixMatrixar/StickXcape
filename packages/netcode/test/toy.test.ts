@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Button, FRAME_MS, mirrorButtons, parseLoadout, verifyMoveHash, type MatchEndMessage } from '@sticxcape/shared';
 import { createFakeRelay } from '../src/fake-relay.ts';
-import type { LockstepSession } from '../src/lockstep.ts';
+import type { MatchSession } from '../src/session.ts';
 import { RelayClient } from '../src/relay-client.ts';
 import { ToyMatch, toyBotInput, toyLoadout } from '../src/toy-match.ts';
 import { ToySim } from '../src/toy-sim.ts';
@@ -88,7 +88,7 @@ describe('fake relay', () => {
       client.sendLoadout(toyLoadout());
       expect(await loadout).toEqual({ player: 2, moves: toyLoadout() });
 
-      const started = new Promise<LockstepSession>((resolve) => client.on('start', resolve));
+      const started = new Promise<MatchSession>((resolve) => client.on('start', resolve));
       client.ready();
       const session = await started;
       expect(session).toMatchObject({ seed: 5, inputDelay: 3, fighters: [1, 2], localSide: 0 });
