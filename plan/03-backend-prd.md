@@ -25,7 +25,7 @@ The services are everything that runs off the phone. In the MVP they are deliber
 
 ## Progress
 
-Updated 2026-11-04. The code is on the `backend-mvp` branch. 135 automated tests pass and bots have played matches through the relay locally, but nothing has been tried on phones or deployed yet.
+Updated 2026-11-04. The code is on `main`, merged with the game client through PR 1; the old `backend-mvp` branch stops before the tests and CI commit. 138 automated tests pass and bots have played matches through the relay locally, but nothing has been tried on phones or deployed yet. No backend code has changed since the frontend work began; later commits only taught the Docker image to serve the game.
 
 | Deliverable | Status | Code |
 | --- | --- | --- |
@@ -39,8 +39,8 @@ Updated 2026-11-04. The code is on the `backend-mvp` branch. 135 automated tests
 | Client mocks | Tested: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
 | Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
 | Relay lab (a toy match between two phones) | Written and tried in a browser against a bot: create a room, share the link, ready, fight, rematch. Shows ping, input delay, time spent waiting and the state checks | `services/server/lab` |
-| Automated tests, bot matches, bad-network and load scripts | Written: 135 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks | `*/test`, `services/server/scripts` |
-| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed, and CI hasn't run yet. CI typechecks, tests, plays bot matches and smoke-tests the image; staging deploys by hand. Needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta test key | `Dockerfile`, `fly.toml`, `.github/workflows` |
+| Automated tests, bot matches, bad-network and load scripts | Written: 138 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks | `*/test`, `services/server/scripts` |
+| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed: the staging address doesn't answer yet. CI typechecks, tests, plays bot matches and smoke-tests the image on pushes to `main` and on pull requests, so PR 1 should have run it, but its results haven't been checked. Staging deploys by hand. Needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta test key | `Dockerfile`, `fly.toml`, `.github/workflows` |
 | Launch services | Not started; they wait for playtests | |
 
 **Bot results so far** (one laptop; the network checks ran inside Docker, on Linux):
