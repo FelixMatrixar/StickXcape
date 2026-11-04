@@ -117,7 +117,17 @@ All calls use HTTPS and reply in JSON. A version mismatch on join tells the phon
 | GET /account/blocks | None | players (id, name, blockedAt) | 401 |
 | POST /account/blocks | player (account id) | Nothing (204); never matched again, either way round | 404: no such player |
 | DELETE /account/blocks/{id} | None | Nothing (204) | 404: not blocked |
-| POST /account/reports | player, reason (nickname, cheating, abuse or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
+| POST /account/reports | player, reason (name, moves, cheating or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
+
+**Shared photo arenas and room reports (launch, AR-4, AR-5, AR-7).** The phone makes photo arenas itself; these share finished ones with friends and take reports from friend rooms. They send the phone's `X-Player-Id` and need no sign-in.
+
+| Call | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| POST /arenas | Multipart: file (arena JSON whose only layer is `photo:{id}`), image (JPEG, 160 to 2048 px a side, at most 1.5 MB), palette (6 colours) | 201 id, link (`/a/{id}`); 200 when that phone already shared it | 400: malformed, `name_blocked` or `image_blocked`; 409: id taken or 30 shared already; 429: 10 an hour per network; 503: `check_unavailable` |
+| GET /arenas/{id} | None | file, imageUrl, palette | 404: not shared or deleted |
+| GET /arenas/{id}/image | None | The JPEG backdrop | 404 |
+| DELETE /arenas/{id} | None (same X-Player-Id) | Nothing (204) | 404: not that phone's |
+| POST /reports | nickname, reason (name, moves, cheating or other), room (or null), at | 202 | 400; 429: over 20 a day per phone; 503: try again later |
 | GET /account/library | None | moves (move, kind, description, quality, createdAt, updatedAt), loadout | 401 |
 | PUT /account/library/moves/{id} | move, kind (move or idle), description, quality, createdAt | updatedAt | 400: malformed or hash mismatch; 409: library full (200 moves) |
 | DELETE /account/library/moves/{id} | None | Nothing (204) | 404: not in the library |
