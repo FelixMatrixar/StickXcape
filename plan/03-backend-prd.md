@@ -25,7 +25,7 @@ The services are everything that runs off the phone. In the MVP they are deliber
 
 ## Progress
 
-Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from `main` after PR 1 merged the backend with the game client. 168 automated tests pass and live Meta AI calls work, but nothing has been tried on phones or deployed yet. Rollback netcode, the first launch item, is built and tested with bots; the fight screen keeps using input delay until it switches rollback on (see below).
+Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from `main` after PR 1 merged the backend with the game client. 198 automated tests pass and live Meta AI calls work, but nothing has been tried on phones or deployed yet. Two launch items are built: rollback netcode, and passkey accounts with a cloud move library. The game uses neither until the frontend switches them on (steps below).
 
 | Deliverable | Status | Code |
 | --- | --- | --- |
@@ -41,8 +41,9 @@ Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from 
 | Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
 | Relay lab (a toy match between two phones) | Written and tried in a browser against a bot: create a room, share the link, ready, fight, rematch. Shows ping, input delay, time spent waiting and the state checks | `services/server/lab` |
 | Automated tests, bot matches, bad-network and load scripts | Written: 168 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks; `--rollback` plays them with rollback netcode | `*/test`, `services/server/scripts` |
-| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed yet. `fly.toml` puts staging in Singapore (`sin`), nearest the playtesters. Before rollback, every CI step passed when run locally (153 tests then). With rollback, typecheck, the 168 tests and the build pass locally; CI now also plays rollback bot matches at 200 ms more round trip. GitHub's own CI results haven't been checked. Staging deploys by hand and needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta key | `Dockerfile`, `fly.toml`, `.github/workflows` |
-| Other launch services | Not started: accounts, the cloud move library and signing, quick match, photo arenas, moderation | |
+| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed yet. `fly.toml` puts staging in Singapore (`sin`), nearest the playtesters. Before rollback, every CI step passed when run locally (153 tests then). Now typecheck, the 198 tests and the build pass locally, and CI also plays rollback bot matches at 200 ms more round trip. GitHub's own CI results haven't been checked. Staging deploys by hand and needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta key. Accounts live on a 1 GB Fly volume at `/data` (`DATABASE_FILE`), which the first deploy makes and Fly snapshots daily; passkeys are tied to `PUBLIC_URL`'s domain, so changing it later strands existing passkeys | `Dockerfile`, `fly.toml`, `.github/workflows` |
+| Accounts and the cloud move library (MP-9, launch) | Tested against software passkeys (ES256, EdDSA and RS256) and tried in a browser with one, on localhost. Players sign up and sign in with a passkey; nobody has to, since guests keep their moves on the phone. The server checks passkeys with Node's own crypto: the challenge, origin and site, user verification (Face ID, fingerprint or PIN), the signature and its counter. Each sign-up or sign-in prompt can be answered once, within 5 minutes. A sign-in is an HttpOnly, SameSite=Lax cookie that lasts 180 days and renews when used; only a hash of it is stored. The library keeps up to 200 moves (idle stances included) with their description and quality, plus the loadout, in SQLite (`node:sqlite`, no new dependency). Deleting an account deletes everything. Passkeys need HTTPS with a domain name, or localhost, so the Wi-Fi address can't use them; staging can. The relay lab has an account panel. Not yet tried on phones | `services/server/src/accounts`, `packages/netcode/src/account.ts` |
+| Other launch services | Not started: move signing (MP-8), quick match, photo arenas, moderation. Meta's API has what photo arenas need (Muse Image and Segment Anything 3.1); it has no moderation endpoint, so moderation would use Muse Spark | |
 
 **Bot results so far** (one laptop; the network checks ran inside Docker, on Linux):
 
@@ -73,6 +74,14 @@ Updated 2026-11-04. Backend work is on the `backend-mvp` branch, restarted from 
 3. Put anything the screen decides from the fight into the save, such as the frame the match was decided on. Report the winner only once `session.confirmedFrame` reaches that frame: a guess can decide a fight that a late input then undoes, and phones that disagree end the match as a desync. `ToyMatch` in `packages/netcode` shows the pattern.
 4. On a replayed frame (`replay` true), skip sounds and effects that the first run already played for that frame, but play new ones, such as a hit the guess missed.
 5. Draw once per animation frame after `update()`, not inside `simulate`, so a rewind is never seen.
+
+**Turning on accounts in the game.** Also the frontend's switch; the services and `AccountClient` are ready.
+
+1. In development, add `'/account': SERVICES` to the Vite proxy, so the sign-in cookie stays on the game's own origin.
+2. Show account features only when `passkeysSupported()` and `(await accounts.status()).passkeys` are both true. Off HTTPS (the Wi-Fi address) they're false, and the game plays as before.
+3. Sign up with `accounts.createAccount(nickname)` and sign in with `accounts.signIn()`. A cancelled passkey prompt rejects with the browser's `NotAllowedError`.
+4. After signing in, merge the libraries once with `getLibrary()`. Upload phone moves the cloud lacks with `saveMove` (the IndexedDB `StoredMove` fields map one to one; `kind: 'idle'` for the idle stance), and add cloud moves the phone lacks. While signed in, save each new or changed move and delete removed ones. `saveLoadout` takes the existing `LoadoutSelection` as it is.
+5. Settings: sign out, and delete the account. After deleting, tell players they can remove the passkey in their phone's password settings.
 
 ## Services
 
@@ -129,7 +138,7 @@ Every call to Meta's Model API goes through the gateway, never straight from a p
 
 ## Added at launch
 
-- **Accounts and the cloud move library.** Sign-in; moves and loadouts stored per player, so a cleared browser loses nothing.
+- **Accounts and the cloud move library.** Built with passkeys (see Progress): moves and loadouts stored per player, so a cleared browser loses nothing.
 - **Move validation and signing.** Re-check speed caps and bone lengths, then sign each move so clients can't edit move data.
 - **Quick match.** Pair strangers on skill rating and ping, with more relay regions as players spread out.
 - **Rollback netcode.** Built (see Progress). It runs alongside input delay and is picked per match; the relay only sets the input delay and passes a once-a-second sync message.

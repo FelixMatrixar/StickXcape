@@ -95,6 +95,22 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 
 All calls use HTTPS and reply in JSON. A version mismatch on join tells the phone to reload the web app.
 
+**Accounts and the cloud move library (launch, MP-9).** Signing in is optional: guests keep playing with the moves on their phone. Players sign up and sign in with a passkey (Face ID, a fingerprint or the phone's PIN), and the sign-in is an HttpOnly cookie, so these calls must come from the game's own origin.
+
+| Call | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| GET /account | None | account (or null), passkeys (whether this server and page can use them) | None |
+| POST /account/passkey/register/options | name (the nickname) | ceremony, WebAuthn creation options | 400: bad name; 429; 503: accounts off, or not on HTTPS with a domain |
+| POST /account/passkey/register | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony or refused passkey; 409: passkey already registered |
+| POST /account/passkey/login/options | None | ceremony, WebAuthn request options | 429; 503 |
+| POST /account/passkey/login | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony; 401: unknown or refused passkey |
+| POST /account/logout | None | account: null | None |
+| DELETE /account | None | Nothing (204); the account, its sign-ins and library are deleted | 401: not signed in |
+| GET /account/library | None | moves (move, kind, description, quality, createdAt, updatedAt), loadout | 401 |
+| PUT /account/library/moves/{id} | move, kind (move or idle), description, quality, createdAt | updatedAt | 400: malformed or hash mismatch; 409: library full (200 moves) |
+| DELETE /account/library/moves/{id} | None | Nothing (204) | 404: not in the library |
+| PUT /account/library/loadout | loadout: place (such as light1) to move id | loadout | 400 |
+
 ## Shared code and environments
 
 **One shared TypeScript package** holds the move and arena file types, every message type, the button bit layout, the input-delay rule and the fixed-point maths. The client and the services both import it, so a change in one place breaks both builds until they agree.
