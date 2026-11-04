@@ -11,6 +11,6 @@ coverage
 .git
 .github
 .claude
-images
+plan
 *.md
 *.log
