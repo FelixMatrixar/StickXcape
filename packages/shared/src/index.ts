@@ -5,6 +5,7 @@ export * from './fixed.ts';
 export * from './rng.ts';
 export * from './base64.ts';
 export * from './move.ts';
+export * from './move-rules.ts';
 export * from './arena.ts';
 export * from './rooms.ts';
 export * from './messages.ts';

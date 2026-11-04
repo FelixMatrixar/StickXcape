@@ -17,7 +17,7 @@ import {
   type MatchSession,
   type ToySim,
 } from '@sticxcape/netcode';
-import { Button, FRAME_MS, fromFixed, isRoomCode, type ButtonName, type MatchEndMessage, type RoomInfo } from '@sticxcape/shared';
+import { Button, FRAME_MS, fromFixed, isRoomCode, type ButtonName, type MatchEndMessage, type MoveFile, type RoomInfo } from '@sticxcape/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -89,12 +89,15 @@ let room: RoomInfo | null = null;
 let current: CurrentMatch | null = null;
 let readyPressed = false;
 
-async function enterRoom(code: string): Promise<void> {
+/** A relay connection wired to the room view. Before a room exists, errors show in the account panel. */
+async function connectRelay(): Promise<RelayClient> {
   const relay = new RelayClient(await connectWebSocket(services.relayUrl));
   relay.on('room', (info) => {
     room = info;
     if (!info.fighters && !info.players.some((p) => p.player === relay.player && p.ready)) readyPressed = false;
     renderRoom();
+    // A quick match opponent leaving brings the Quick match button back.
+    if (relay.opponent) showAccountButtons(true);
   });
   relay.on('start', startMatch);
   relay.on('end', (end) => {
@@ -105,10 +108,15 @@ async function enterRoom(code: string): Promise<void> {
   let lastError = '';
   relay.on('error', (error) => {
     lastError = error.code === 'version_mismatch' ? 'This page is out of date; reload it.' : error.message;
-    setStatus(lastError, true);
+    if (client === relay) setStatus(lastError, true);
+    else $('account-status').textContent = lastError;
   });
   relay.on('close', () => setStatus(`${lastError ? `${lastError}. ` : ''}Disconnected from the relay; reload to rejoin.`, true));
+  return relay;
+}
 
+async function enterRoom(code: string): Promise<void> {
+  const relay = await connectRelay();
   try {
     const joined = await relay.join(code, nicknameInput.value);
     client = relay;
@@ -133,6 +141,44 @@ async function enterRoom(code: string): Promise<void> {
   anchor.textContent = link;
   $('share').addEventListener('click', () => void shareLink(link));
   renderRoom();
+}
+
+/**
+ * Quick match (launch): sign the toy loadout, then look for a stranger. Needs this page signed
+ * in, since the relay reads the sign-in cookie. Once matched it plays like any room.
+ */
+let searcher: RelayClient | null = null;
+let signedLoadout: MoveFile[] = [];
+
+async function startQuickMatch(): Promise<void> {
+  signedLoadout = await accounts.signMoves(toyLoadout());
+  // Left alone after a quick match: leave that room and search again on the same connection.
+  if (client && client === searcher) {
+    client.leave();
+    client = null;
+    room = null;
+    current = null;
+    $('room').hidden = true;
+  }
+  if (!searcher) {
+    const relay = await connectRelay();
+    relay.on('queued', () => ($('account-status').textContent = 'Looking for an opponent of your level…'));
+    relay.on('matched', (opponent) => {
+      client = relay;
+      room = relay.room;
+      relay.sendLoadout(signedLoadout);
+      $('home').hidden = true;
+      $('room').hidden = false;
+      $<HTMLElement>('invite').hidden = true;
+      $('account-status').textContent = `Matched with ${opponent.nickname}.`;
+      showAccountButtons(true);
+      renderRoom();
+    });
+    relay.on('error', () => showAccountButtons(true));
+    searcher = relay;
+  }
+  searcher.quickMatch(nicknameInput.value);
+  showAccountButtons(true);
 }
 
 async function shareLink(link: string): Promise<void> {
@@ -192,6 +238,7 @@ function renderRoom(): void {
   readyButton.textContent = rematch ? 'Rematch' : 'Ready';
 
   if (room.fighters) setStatus(`${nameOf(room.fighters[0])} vs ${nameOf(room.fighters[1])}`);
+  else if (room.players.length < 2 && client.opponent) setStatus('Your opponent left. Tap Quick match to find another.');
   else if (room.players.length < 2) setStatus('Waiting for someone to open the invite link…');
   else if (!myTurn) setStatus(`${nameOf(next[0]!)} and ${nameOf(next[1]!)} fight next; you are in the queue.`);
   else if (readyPressed) setStatus(`Waiting for ${nameOf(next.find((p) => p !== me)!)} to tap Ready…`);
@@ -442,6 +489,8 @@ const accounts = new AccountClient();
 const accountButtons = {
   create: $<HTMLButtonElement>('account-create'),
   signIn: $<HTMLButtonElement>('account-signin'),
+  quick: $<HTMLButtonElement>('account-quick'),
+  cancel: $<HTMLButtonElement>('account-cancel'),
   save: $<HTMLButtonElement>('account-save'),
   signOut: $<HTMLButtonElement>('account-signout'),
 };
@@ -449,6 +498,10 @@ const accountButtons = {
 function showAccountButtons(signedIn: boolean | null): void {
   accountButtons.create.hidden = accountButtons.signIn.hidden = signedIn !== false;
   accountButtons.save.hidden = accountButtons.signOut.hidden = signedIn !== true;
+  // Quick match is offered while signed in and not searching, outside a room or left alone in a quick one.
+  const aloneInQuickRoom = client !== null && client.opponent !== null && (room?.players.length ?? 0) < 2;
+  accountButtons.quick.hidden = signedIn !== true || (client !== null && !aloneInQuickRoom) || searcher?.searching === true;
+  accountButtons.cancel.hidden = searcher?.searching !== true;
 }
 
 async function refreshAccount(): Promise<void> {
@@ -502,6 +555,14 @@ accountAction(accountButtons.save, () =>
   accounts.saveMove({ move: toyLoadout()[0]!, kind: 'move', description: "The relay lab's toy jab", quality: null, createdAt: Date.now() }),
 );
 accountAction(accountButtons.signOut, () => accounts.signOut());
+accountButtons.quick.addEventListener('click', () => {
+  startQuickMatch().catch((err: unknown) => ($('account-status').textContent = accountErrorText(err)));
+});
+accountButtons.cancel.addEventListener('click', () => {
+  searcher?.cancelQuickMatch();
+  $('account-status').textContent = 'Stopped looking.';
+  showAccountButtons(true);
+});
 refreshAccount().catch((err: unknown) => ($('account-status').textContent = accountErrorText(err)));
 
 // One loop drives the match, the drawing and the stats.

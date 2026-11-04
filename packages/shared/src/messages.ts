@@ -23,6 +23,11 @@ export const ERROR_CODES = [
   'input_ahead',
   'idle_timeout',
   'server_shutdown',
+  // Quick match (launch).
+  'not_signed_in',
+  'nickname_blocked',
+  'unsigned_move',
+  'quick_match_unavailable',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -106,6 +111,24 @@ export interface SyncMessage {
 /** A sync message's lateness is at most this many frames either way. */
 export const MAX_SYNC_LATENESS = 600;
 
+/**
+ * Quick match (launch, MP-7): look for a stranger of similar skill and ping. Needs a signed-in
+ * account (the relay reads the sign-in cookie when the socket opens) and no room. The relay
+ * answers queued, then joined and matched once it pairs two players in a new two-player room.
+ */
+export interface QuickMatchMessage {
+  type: 'quickmatch';
+  nickname: string;
+}
+/** Stops looking for a quick match. */
+export interface CancelMatchMessage {
+  type: 'cancelmatch';
+}
+/** Leaves the current room but keeps the connection, for another quick match or room. */
+export interface LeaveMessage {
+  type: 'leave';
+}
+
 export type ClientMessage =
   | JoinMessage
   | LoadoutMessage
@@ -116,7 +139,10 @@ export type ClientMessage =
   | EndMessage
   | PingMessage
   | PongMessage
-  | SyncMessage;
+  | SyncMessage
+  | QuickMatchMessage
+  | CancelMatchMessage
+  | LeaveMessage;
 
 // Relay to phone.
 
@@ -159,6 +185,19 @@ export interface ErrorMessage {
   code: ErrorCode;
   message: string;
 }
+/** In the quick match queue, looking for an opponent. */
+export interface QueuedMessage {
+  type: 'queued';
+}
+/**
+ * Paired with a stranger; sent right after joined puts this phone in the new room. `id` is the
+ * opponent's account id, for blocking or reporting them. Their nickname is shown only once Meta
+ * AI has checked it; otherwise it reads Challenger.
+ */
+export interface MatchedMessage {
+  type: 'matched';
+  opponent: { id: string; nickname: string };
+}
 
 export type ServerMessage =
   | JoinedMessage
@@ -172,6 +211,8 @@ export type ServerMessage =
   | PingMessage
   | PongMessage
   | SyncMessage
+  | QueuedMessage
+  | MatchedMessage
   | ErrorMessage;
 
 /**
@@ -215,6 +256,11 @@ export function parseClientMessage(data: string): ClientMessage | null {
       return m.rollback === true ? { type: 'ready', rollback: true } : { type: 'ready' };
     case 'sync':
       return isNum(m.lateness, -MAX_SYNC_LATENESS, MAX_SYNC_LATENESS) ? { type: 'sync', lateness: m.lateness } : null;
+    case 'quickmatch':
+      return typeof m.nickname === 'string' && m.nickname.length <= 256 ? { type: 'quickmatch', nickname: m.nickname } : null;
+    case 'cancelmatch':
+    case 'leave':
+      return { type: m.type };
     case 'end':
       return m.winner === null || isInt(m.winner, 1, MAX_ROOM_PLAYERS) ? { type: 'end', winner: m.winner } : null;
     default:
@@ -222,7 +268,22 @@ export function parseClientMessage(data: string): ClientMessage | null {
   }
 }
 
-const SERVER_MESSAGE_TYPES = new Set<string>(['joined', 'room', 'loadout', 'arena', 'start', 'input', 'hash', 'end', 'ping', 'pong', 'sync', 'error']);
+const SERVER_MESSAGE_TYPES = new Set<string>([
+  'joined',
+  'room',
+  'loadout',
+  'arena',
+  'start',
+  'input',
+  'hash',
+  'end',
+  'ping',
+  'pong',
+  'sync',
+  'queued',
+  'matched',
+  'error',
+]);
 
 /** Parses one message from the relay. The relay is trusted, so only the type is checked. */
 export function parseServerMessage(data: string): ServerMessage | null {

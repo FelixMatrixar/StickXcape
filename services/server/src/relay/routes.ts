@@ -1,11 +1,15 @@
 import type { FastifyInstance, FastifyRequest, RouteShorthandOptions } from 'fastify';
 import type { WebSocket } from 'ws';
+import { accountFromCookie } from '../accounts/routes.ts';
+import type { AccountStore } from '../accounts/store.ts';
 import type { Relay } from './relay.ts';
 
 export interface RelayRoutesOptions {
   relay: Relay;
   /** Browser origins allowed to connect; empty allows any. */
   allowedOrigins: string[];
+  /** For quick match: the socket's opening request carries the page's sign-in cookie. */
+  accounts: AccountStore | null;
 }
 
 type WebSocketRoute = (
@@ -15,7 +19,7 @@ type WebSocketRoute = (
 ) => unknown;
 
 /** The relay's WebSocket endpoint: wss://host/ws. */
-export function registerRelayRoutes(app: FastifyInstance, { relay, allowedOrigins }: RelayRoutesOptions): void {
+export function registerRelayRoutes(app: FastifyInstance, { relay, allowedOrigins, accounts }: RelayRoutesOptions): void {
   // @fastify/websocket's route typings don't merge under TypeScript 7, so the route is declared through this narrow type.
   const websocketRoute = app.get.bind(app) as unknown as WebSocketRoute;
   websocketRoute(
@@ -30,6 +34,6 @@ export function registerRelayRoutes(app: FastifyInstance, { relay, allowedOrigin
         }
       },
     },
-    (socket, request) => relay.accept(socket, request.ip),
+    (socket, request) => relay.accept(socket, request.ip, accountFromCookie(accounts, request.headers.cookie)),
   );
 }

@@ -19,6 +19,7 @@ import {
   parsePasskeyAssertion,
   parsePasskeyRegistration,
   MAX_ROLLBACK_FRAMES,
+  moveRuleProblem,
   mirrorButtons,
   MOVE_FORMAT_VERSION,
   packButtons,
@@ -183,6 +184,10 @@ describe('parseClientMessage', () => {
     expect(parse({ type: 'sync', lateness: -2.5 })).toEqual({ type: 'sync', lateness: -2.5 });
     expect(parse({ type: 'sync', lateness: 601 })).toBeNull();
     expect(parse({ type: 'sync', lateness: '1' })).toBeNull();
+    expect(parse({ type: 'quickmatch', nickname: 'Ana' })).toEqual({ type: 'quickmatch', nickname: 'Ana' });
+    expect(parse({ type: 'quickmatch' })).toBeNull();
+    expect(parse({ type: 'cancelmatch', extra: 1 })).toEqual({ type: 'cancelmatch' });
+    expect(parse({ type: 'leave' })).toEqual({ type: 'leave' });
     expect(parse({ type: 'arena', arenaId: 'rooftop-2' })).toEqual({ type: 'arena', arenaId: 'rooftop-2' });
     expect(parse({ type: 'arena', arenaId: 'Rooftop' })).toBeNull();
     expect(parse({ type: 'end', winner: null })).toEqual({ type: 'end', winner: null });
@@ -195,6 +200,39 @@ describe('parseClientMessage', () => {
     const move = await sampleMove();
     expect(parse({ type: 'loadout', moves: [move] })).toEqual({ type: 'loadout', moves: [move] });
     expect(parse({ type: 'loadout', moves: [] })).toBeNull();
+  });
+});
+
+describe('move rules for signing', () => {
+  /** A still move of `frames` frames, standing, with a change applied to its values. */
+  function moveWith(frames: number, change: (values: Int16Array) => void = () => {}) {
+    const values = new Int16Array(frames * FRAME_VALUES);
+    for (let f = 0; f < frames; f++) values[f * FRAME_VALUES + 1] = 950;
+    change(values);
+    return withHash({
+      id: '7a1c0de0-0000-4000-8000-000000000001',
+      version: MOVE_FORMAT_VERSION,
+      slot: 'light',
+      name: 'Test',
+      frames: encodeFrames(values),
+      active: [0, frames - 1],
+      limb: 'rightWrist',
+      height: 'mid',
+    });
+  }
+
+  it('passes ordinary moves, including a half-turn spin spread over frames and a wrap past half a turn', async () => {
+    expect(moveRuleProblem(await moveWith(10))).toBeNull();
+    expect(moveRuleProblem(await moveWith(10, (v) => v.forEach((_, i) => i % FRAME_VALUES === 2 && (v[i] = ((i / FRAME_VALUES) * 3600) | 0))))).toBeNull();
+    // 179° to -179° is a 2° turn the short way round.
+    expect(moveRuleProblem(await moveWith(2, (v) => ((v[4] = 32_600), (v[FRAME_VALUES + 4] = -32_600))))).toBeNull();
+  });
+
+  it('refuses teleports, limbs that spin round in a frame, and bodies far from the floor', async () => {
+    expect(moveRuleProblem(await moveWith(3, (v) => (v[2 * FRAME_VALUES] = 800)))).toMatch(/frame 2.*45 m\/s/);
+    expect(moveRuleProblem(await moveWith(3, (v) => (v[FRAME_VALUES + 2 + 7] = 22_000)))).toMatch(/frame 1: the rightElbow/);
+    expect(moveRuleProblem(await moveWith(3, (v) => v.forEach((_, i) => i % FRAME_VALUES === 1 && (v[i] = 3100))))).toMatch(/floor/);
+    expect(moveRuleProblem(await moveWith(3, (v) => v.forEach((_, i) => i % FRAME_VALUES === 0 && (v[i] = -6500))))).toMatch(/6 m/);
   });
 });
 

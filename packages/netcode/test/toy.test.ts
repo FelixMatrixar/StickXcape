@@ -110,6 +110,25 @@ describe('fake relay', () => {
     }
   });
 
+  it('finds Echo for a quick match at once, and leaves cleanly', async () => {
+    const client = new RelayClient(createFakeRelay({ seed: 5 }), { pingIntervalMs: 60_000 });
+    try {
+      const queued = new Promise((resolve) => client.on('queued', resolve));
+      const matched = new Promise((resolve) => client.on('matched', resolve));
+      client.quickMatch('Ana');
+      expect(client.searching).toBe(true);
+      await queued;
+      expect(await matched).toEqual({ id: 'echo-fake-relay0', nickname: 'Echo' });
+      expect(client).toMatchObject({ searching: false, player: 1, opponent: { nickname: 'Echo' } });
+      expect(client.room?.players.map((p) => p.nickname)).toEqual(['Ana', 'Echo']);
+
+      client.leave();
+      expect(client).toMatchObject({ player: null, room: null, opponent: null, searching: false });
+    } finally {
+      client.close();
+    }
+  });
+
   it('wants a loadout before ready', async () => {
     const client = new RelayClient(createFakeRelay(), { pingIntervalMs: 60_000 });
     await client.join('local', 'Ana');

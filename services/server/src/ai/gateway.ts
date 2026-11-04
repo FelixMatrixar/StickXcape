@@ -14,7 +14,19 @@ import type { ErrorRateAlert } from '../metrics/alerts.ts';
 import type { AiCall, AiOutcome, Metrics } from '../metrics/metrics.ts';
 import { cannedMatchTips, cannedMoveName } from './canned.ts';
 import { AiError, chatJson } from './meta-client.ts';
-import { MATCH_TIPS_PROMPT, MOVE_NAME_PROMPT, matchTipsMessages, moveNameMessages, type ChatMessage, type Prompt } from './prompts.ts';
+import {
+  MATCH_TIPS_PROMPT,
+  MOVE_NAME_PROMPT,
+  NICKNAME_PROMPT,
+  matchTipsMessages,
+  moveNameMessages,
+  nicknameMessages,
+  type ChatMessage,
+  type Prompt,
+} from './prompts.ts';
+
+/** A nickname's verdict: shown to strangers, refused, or not checked (no key, over the limit, or Meta failed). */
+export type NicknameVerdict = 'allowed' | 'blocked' | 'unchecked';
 
 /** The player used up a daily allowance; the client falls back (HTTP 429). */
 export class AiRateLimitedError extends Error {}
@@ -64,7 +76,30 @@ export class AiGateway {
     this.quotas = {
       move_name: { player: new DailyQuota(config.moveNamesPerDay), ip: new DailyQuota(config.moveNamesPerDay * config.perIpMultiplier) },
       match_tips: { player: new DailyQuota(config.matchTipsPerDay), ip: new DailyQuota(config.matchTipsPerDay * config.perIpMultiplier) },
+      nickname_check: { player: new DailyQuota(config.nicknameChecksPerDay), ip: new DailyQuota(config.nicknameChecksPerDay * config.perIpMultiplier) },
     };
+  }
+
+  /**
+   * Whether strangers may see a nickname (launch moderation). Never throws: without a key, over
+   * the daily limit, or when Meta fails or is slow, the answer is unchecked, and quick match then
+   * shows a neutral name instead ("block until checked").
+   */
+  async checkNickname(nickname: string, who: Requester): Promise<NicknameVerdict> {
+    if (this.mode === 'canned') return 'unchecked';
+    // Case doesn't change what a name says, so checks are cached without it.
+    const name = nickname.toLowerCase();
+    try {
+      const { allowed } = await this.run('nickname_check', NICKNAME_PROMPT, { name }, who, () => ({ allowed: false }), async (signal) => {
+        const reply = await this.chat(NICKNAME_PROMPT, nicknameMessages(name), who, signal);
+        if (typeof reply.allowed !== 'boolean') throw new AiError('invalid_response', 'Reply had no verdict');
+        if (!reply.allowed) this.options.log.info({ reason: cleanLine(reply.reason, 80) }, 'nickname blocked');
+        return { allowed: reply.allowed };
+      });
+      return allowed ? 'allowed' : 'blocked';
+    } catch {
+      return 'unchecked';
+    }
   }
 
   /** A name and one-line description for a new move. */

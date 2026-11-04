@@ -17,6 +17,13 @@ export class Connection {
   nickname: string | null = null;
   /** True when the phone's last ready asked for rollback netcode. */
   rollback = false;
+  /** The account signed in on the page that opened this socket, if any. */
+  account: { id: string; name: string } | null = null;
+  /** Its sign-in token, to check the sign-in still stands before quick match. */
+  sessionToken: string | null = null;
+  /** Asked for a quick match and not yet paired or cancelled (includes the nickname check). */
+  seeking = false;
+  closed = false;
   lastSeen: number;
   /** Messages dropped by the rate cap since the last relay tick. */
   rateDrops = 0;

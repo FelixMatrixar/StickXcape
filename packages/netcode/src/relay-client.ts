@@ -19,6 +19,12 @@ export interface JoinResult {
   room: RoomInfo;
 }
 
+/** The stranger a quick match paired this phone with. `id` is for blocking or reporting them. */
+export interface QuickMatchOpponent {
+  id: string;
+  nickname: string;
+}
+
 export interface RelayClientEvents {
   room: RoomInfo;
   loadout: { player: number; moves: MoveFile[] };
@@ -27,7 +33,14 @@ export interface RelayClientEvents {
   end: MatchEndMessage;
   error: RelayError;
   close: string;
+  /** In the quick match queue. */
+  queued: true;
+  /** Paired with a stranger, and already in the new room with them (see `room`). */
+  matched: QuickMatchOpponent;
 }
+
+/** Errors that end a quick match search. */
+const SEARCH_ERRORS = new Set<ErrorCode>(['not_signed_in', 'nickname_blocked', 'quick_match_unavailable', 'bad_nickname', 'already_joined']);
 
 export interface RelayClientOptions {
   pingIntervalMs?: number;
@@ -52,6 +65,10 @@ export class RelayClient {
   /** The match in progress, if any. */
   session: MatchSession | null = null;
   closed = false;
+  /** True from quickMatch() until paired, cancelled or refused. */
+  searching = false;
+  /** The quick match opponent while in a quick match room, otherwise null. */
+  opponent: QuickMatchOpponent | null = null;
   /**
    * True when this game can play with rollback netcode (it runs RollbackDriver, with save and
    * load). It is sent with each ready; a match uses rollback only when both fighters ask for it,
@@ -120,6 +137,34 @@ export class RelayClient {
     this.transport.send(this.rollback ? { type: 'ready', rollback: true } : { type: 'ready' });
   }
 
+  /**
+   * Looks for a stranger of similar skill (launch, MP-7). Needs the page signed in (the socket
+   * carries the sign-in cookie) and no room. Listen for `queued`, then `matched`; the relay puts
+   * both phones in a new two-player room, where you send a loadout of signed moves
+   * (AccountClient.signMoves) and get ready as usual. Refusals arrive as `error`.
+   */
+  quickMatch(nickname: string): void {
+    this.searching = true;
+    this.transport.send({ type: 'quickmatch', nickname });
+  }
+
+  cancelQuickMatch(): void {
+    this.searching = false;
+    this.transport.send({ type: 'cancelmatch' });
+  }
+
+  /** Leaves the room (or the quick match queue) and keeps the connection, ready to join or search again. */
+  leave(): void {
+    this.transport.send({ type: 'leave' });
+    this.player = null;
+    this.host = false;
+    this.room = null;
+    this.loadouts.clear();
+    this.session = null;
+    this.searching = false;
+    this.opponent = null;
+  }
+
   close(): void {
     clearInterval(this.pingTimer);
     this.transport.close();
@@ -160,6 +205,12 @@ export class RelayClient {
         this.session?.receive(message);
         this.session = null;
         return this.emit('end', message);
+      case 'queued':
+        return this.emit('queued', true);
+      case 'matched':
+        this.searching = false;
+        this.opponent = message.opponent;
+        return this.emit('matched', message.opponent);
       case 'ping':
         return this.transport.send({ type: 'pong', time: message.time });
       case 'pong': {
@@ -172,6 +223,7 @@ export class RelayClient {
       }
       case 'error': {
         const error = new RelayError(message.code, message.message);
+        if (this.searching && SEARCH_ERRORS.has(message.code)) this.searching = false;
         if (this.pendingJoin) {
           this.pendingJoin.reject(error);
           this.pendingJoin = null;

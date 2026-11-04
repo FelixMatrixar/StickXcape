@@ -4,9 +4,13 @@ import {
   encodeBase64Url,
   type AccountInfo,
   type AccountResponse,
+  type BlockedPlayer,
   type CloudMoveInput,
   type LibraryResponse,
   type LoadoutSelection,
+  type MoveFile,
+  type ReportReason,
+  type SignMovesResponse,
   type PasskeyAssertion,
   type PasskeyCeremony,
   type PasskeyCreationOptions,
@@ -155,6 +159,32 @@ export class AccountClient {
 
   async saveLoadout(loadout: LoadoutSelection): Promise<void> {
     await this.request('PUT', '/library/loadout', { loadout });
+  }
+
+  /**
+   * Has the server check and sign moves (MP-8). Quick match takes only signed moves, so sign the
+   * full loadout, default moves included, before searching; any later edit needs a new signature.
+   */
+  async signMoves(moves: MoveFile[]): Promise<MoveFile[]> {
+    return (await this.request<SignMovesResponse>('POST', '/moves/sign', { moves })).moves;
+  }
+
+  /** Never be matched with this player again (their id comes from the quick match). */
+  async blockPlayer(id: string): Promise<void> {
+    await this.request('POST', '/blocks', { player: id });
+  }
+
+  async unblockPlayer(id: string): Promise<void> {
+    await this.request('DELETE', `/blocks/${encodeURIComponent(id)}`);
+  }
+
+  async blockedPlayers(): Promise<BlockedPlayer[]> {
+    return (await this.request<{ players: BlockedPlayer[] }>('GET', '/blocks')).players;
+  }
+
+  /** Reports a player for review. A note is optional, up to 300 characters. */
+  async reportPlayer(id: string, reason: ReportReason, note?: string): Promise<void> {
+    await this.request('POST', '/reports', note ? { player: id, reason, note } : { player: id, reason });
   }
 
   private request<T>(method: string, path: string, body?: unknown): Promise<T> {

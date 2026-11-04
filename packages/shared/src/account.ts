@@ -59,6 +59,41 @@ export interface SaveMoveResponse {
   updatedAt: number;
 }
 
+/**
+ * POST /account/moves/sign: the server re-checks moves (MOVE_RULES) and signs them. Quick match
+ * takes only signed moves, so sign the whole loadout, default moves included, before queueing.
+ */
+export interface SignMovesRequest {
+  moves: MoveFile[];
+}
+export interface SignMovesResponse {
+  moves: MoveFile[];
+}
+export const SIGN_MAX_MOVES = 16;
+
+/** Reasons a player can be reported for. */
+export const REPORT_REASONS = ['nickname', 'cheating', 'abuse', 'other'] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+export const REPORT_NOTE_MAX_LENGTH = 300;
+
+/** POST /account/reports */
+export interface ReportRequest {
+  /** The opponent's id from the quick match's matched message. */
+  player: string;
+  reason: ReportReason;
+  note?: string;
+}
+
+/** GET /account/blocks: players this account never gets matched with again. */
+export interface BlockedPlayer {
+  id: string;
+  name: string;
+  blockedAt: number;
+}
+
+/** Account ids are 16 base64url characters. */
+export const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
+
 // Passkeys. Binary fields travel as base64url strings, as in WebAuthn's own JSON forms.
 
 /** Options for navigator.credentials.create, from POST /account/passkey/register/options. */

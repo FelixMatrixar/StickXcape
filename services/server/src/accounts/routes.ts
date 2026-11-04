@@ -2,26 +2,38 @@ import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  ACCOUNT_ID_PATTERN,
   ACCOUNT_PATH,
+  cleanText,
+  moveRuleProblem,
   parseAccountName,
   parseCloudMove,
   parseLoadoutSelection,
+  parseMoveFile,
   parsePasskeyAssertion,
   parsePasskeyRegistration,
+  REPORT_NOTE_MAX_LENGTH,
+  REPORT_REASONS,
+  SIGN_MAX_MOVES,
   verifyMoveHash,
   type AccountInfo,
   type AccountResponse,
   type ApiError,
+  type BlockedPlayer,
   type LibraryResponse,
   type LoadoutSelection,
+  type MoveFile,
   type PasskeyCeremony,
   type PasskeyCreationOptions,
   type PasskeyRequestOptions,
+  type ReportReason,
   type SaveMoveResponse,
+  type SignMovesResponse,
 } from '@sticxcape/shared';
 import type { Config } from '../config.ts';
 import { WindowLimiter } from '../lib/limits.ts';
 import type { Metrics } from '../metrics/metrics.ts';
+import type { MoveSigner } from './signing.ts';
 import type { AccountStore } from './store.ts';
 import { PASSKEY_ALGORITHMS, PasskeyError, verifyAssertion, verifyRegistration, type NewCredential, type RelyingParty } from './webauthn.ts';
 
@@ -29,6 +41,8 @@ export interface AccountRoutesOptions {
   config: Config;
   /** Null when accounts are off: the routes then say so, and GET /account reports no passkeys. */
   store: AccountStore | null;
+  /** Signs checked moves for quick match; null when accounts are off. */
+  signer: MoveSigner | null;
   metrics: Metrics;
   now: () => number;
 }
@@ -44,6 +58,8 @@ const RP_NAME = 'SticXcape';
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Library changes one account may make per 10 minutes: plenty for syncing a whole library. */
 const LIBRARY_WRITES = 600;
+/** Reports one account may file a day. */
+const REPORTS_PER_DAY = 20;
 
 interface Ceremony {
   kind: 'register' | 'login';
@@ -65,7 +81,7 @@ interface Session {
  * use passkeys; a sign-in is an HttpOnly, SameSite=Lax cookie that lasts 180 days and renews
  * itself when used. Returns a pruner for the server's sweep timer.
  */
-export function registerAccountRoutes(app: FastifyInstance, { config, store, metrics, now }: AccountRoutesOptions): { prune(at: number): void } {
+export function registerAccountRoutes(app: FastifyInstance, { config, store, signer, metrics, now }: AccountRoutesOptions): { prune(at: number): void } {
   const ceremonies = new Map<string, Ceremony>();
   const passkeyLimiter = new WindowLimiter(config.accounts.passkeyLimitPerIp, config.accounts.passkeyWindowMs);
   const writeLimiter = new WindowLimiter(LIBRARY_WRITES, 10 * 60 * 1000);
@@ -337,7 +353,86 @@ export function registerAccountRoutes(app: FastifyInstance, { config, store, met
     return { loadout };
   });
 
+  // Quick match: signed loadouts, blocks and reports.
+
+  /** Re-checks moves and signs them; quick match takes only signed moves (MP-8). */
+  app.post<{ Reply: SignMovesResponse | ApiError }>(`${ACCOUNT_PATH}/moves/sign`, { preHandler: sameOrigin }, async (request, reply) => {
+    const ready = requireSession(request, reply);
+    if (!ready) return reply;
+    if (!signer) return reply.code(503).send(apiError('accounts_off', 'Move signing is switched off on this server'));
+    if (!writeLimiter.take(ready.session.account.id, now())) return reply.code(429).send(apiError('too_many_changes', 'Too many requests; try again in a few minutes'));
+    const raw = (request.body as { moves?: unknown } | undefined)?.moves;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > SIGN_MAX_MOVES) return reply.code(400).send(apiError('bad_move', `Send 1 to ${SIGN_MAX_MOVES} moves`));
+    const signed: MoveFile[] = [];
+    for (const [i, item] of raw.entries()) {
+      const move = parseMoveFile(item);
+      if (!move) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} is malformed`));
+      if (!(await verifyMoveHash(move))) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} (${move.name}): its hash doesn't match its contents`));
+      const problem = moveRuleProblem(move);
+      if (problem) return reply.code(400).send(apiError('bad_move', `Move ${i + 1} (${move.name}): ${problem}`));
+      signed.push(signer.sign(move));
+    }
+    return { moves: signed };
+  });
+
+  app.get<{ Reply: { players: BlockedPlayer[] } | ApiError }>(`${ACCOUNT_PATH}/blocks`, async (request, reply) => {
+    const ready = requireSession(request, reply);
+    if (!ready) return reply;
+    return { players: ready.store.blockedPlayers(ready.session.account.id) };
+  });
+
+  /** A blocked player is never matched with this account again, either way round. */
+  app.post(`${ACCOUNT_PATH}/blocks`, { preHandler: sameOrigin }, async (request, reply) => {
+    const ready = requireSession(request, reply);
+    if (!ready) return reply;
+    const player = (request.body as { player?: unknown } | undefined)?.player;
+    if (typeof player !== 'string' || !ACCOUNT_ID_PATTERN.test(player)) return reply.code(400).send(apiError('bad_player', 'Name the player by their id'));
+    if (!ready.store.block(ready.session.account.id, player)) return reply.code(404).send(apiError('not_found', 'No such player'));
+    return reply.code(204).send();
+  });
+
+  app.delete<{ Params: { id: string } }>(`${ACCOUNT_PATH}/blocks/:id`, { preHandler: sameOrigin }, async (request, reply) => {
+    const ready = requireSession(request, reply);
+    if (!ready) return reply;
+    if (!ready.store.unblock(ready.session.account.id, request.params.id)) return reply.code(404).send(apiError('not_found', 'That player is not blocked'));
+    return reply.code(204).send();
+  });
+
+  /** Reports are stored for review; nothing happens to the player automatically. */
+  app.post(`${ACCOUNT_PATH}/reports`, { preHandler: sameOrigin }, async (request, reply) => {
+    const ready = requireSession(request, reply);
+    if (!ready) return reply;
+    const body = request.body as { player?: unknown; reason?: unknown; note?: unknown } | undefined;
+    const player = body?.player;
+    const reason = body?.reason;
+    if (typeof player !== 'string' || !ACCOUNT_ID_PATTERN.test(player)) return reply.code(400).send(apiError('bad_player', 'Name the player by their id'));
+    if (typeof reason !== 'string' || !(REPORT_REASONS as readonly string[]).includes(reason)) {
+      return reply.code(400).send(apiError('bad_reason', `The reason must be one of: ${REPORT_REASONS.join(', ')}`));
+    }
+    let note: string | null = null;
+    if (body?.note !== undefined && body.note !== null && body.note !== '') {
+      note = cleanText(body.note, REPORT_NOTE_MAX_LENGTH);
+      if (note === null) return reply.code(400).send(apiError('bad_note', `A note is at most ${REPORT_NOTE_MAX_LENGTH} characters`));
+    }
+    const reporter = ready.session.account.id;
+    if (ready.store.reportsSince(reporter, now() - DAY_MS) >= REPORTS_PER_DAY) return reply.code(429).send(apiError('too_many_reports', 'Too many reports today'));
+    if (!ready.store.report(reporter, player, reason as ReportReason, note)) return reply.code(404).send(apiError('not_found', 'No such player'));
+    request.log.info({ reporter, reported: player, reason }, 'player reported');
+    return reply.code(201).send({ reported: true });
+  });
+
   return { prune };
+}
+
+/**
+ * The account behind a sign-in cookie, for the relay: its socket's opening request carries the
+ * cookie like any other request from the page. Returns the token too, to check the sign-in
+ * again later (it may have ended since the socket opened).
+ */
+export function accountFromCookie(store: AccountStore | null, cookieHeader: string | undefined): { account: AccountInfo; token: string } | null {
+  const token = readCookie(cookieHeader, COOKIE);
+  const session = token && store ? store.findSession(token) : undefined;
+  return session && token ? { account: session.account, token } : null;
 }
 
 function apiError(error: string, message: string): ApiError {

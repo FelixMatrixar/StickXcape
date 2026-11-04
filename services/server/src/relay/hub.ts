@@ -23,12 +23,18 @@ export interface HubContext {
   now: () => number;
   /** Closes the whole room, as when a phone sends inputs far ahead of the match clock. */
   closeRoom: (hub: Hub) => void;
+  /** Quick match rooms: true when the server signed this exact move. */
+  verifyMove: (move: MoveFile) => boolean;
+  /** Quick match rooms: a match ended; the fighters' accounts are left then right. */
+  quickMatchEnded: (accounts: [string | null, string | null], winnerSide: Side | null, reason: EndReason) => void;
 }
 
-type Side = 0 | 1;
+export type Side = 0 | 1;
 
 interface Match {
   fighters: [number, number];
+  /** The fighters' signed-in accounts when the match started, for quick match ratings. */
+  accounts: [string | null, string | null];
   startFrame: number;
   inputDelay: number;
   /** Frames of rollback; 0 for an input-delay match. */
@@ -121,6 +127,10 @@ export class Hub {
 
   setLoadout(player: number, moves: MoveFile[]): void {
     if (this.match?.fighters.includes(player)) return this.error(player, 'match_in_progress', 'Loadouts are locked during a match');
+    // Strangers get only moves the server checked and signed (MP-8); friends trust each other.
+    if (this.room.quick && !moves.every((move) => this.ctx.verifyMove(move))) {
+      return this.error(player, 'unsigned_move', 'Quick match takes only moves the server has signed; sign your loadout first');
+    }
     this.loadouts.set(player, moves);
     this.ready.delete(player);
     const opponent = this.pairedWith(player);
@@ -321,6 +331,7 @@ export class Hub {
     const startFrame = 0;
     this.match = {
       fighters: [a, b],
+      accounts: [connA.account?.id ?? null, connB.account?.id ?? null],
       startFrame,
       inputDelay,
       rollback,
@@ -358,6 +369,10 @@ export class Hub {
     }
     this.ctx.metrics.matchesEnded.inc({ reason });
     this.ctx.log.info({ room: this.room.code, reason, winner: winner === null ? null : this.nickname(winner) }, 'match ended');
+    if (this.room.quick) {
+      const winnerSide = winner === match.fighters[0] ? 0 : winner === match.fighters[1] ? 1 : null;
+      this.ctx.quickMatchEnded(match.accounts, winnerSide, reason);
+    }
     this.updatePairing();
     this.broadcastRoom();
   }

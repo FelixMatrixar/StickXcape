@@ -1,5 +1,5 @@
 export { connectWebSocket, type ConnectOptions, type Latency, type RelayTransport } from './transport.ts';
-export { RelayClient, RelayError, type JoinResult, type RelayClientEvents, type RelayClientOptions } from './relay-client.ts';
+export { RelayClient, RelayError, type JoinResult, type QuickMatchOpponent, type RelayClientEvents, type RelayClientOptions } from './relay-client.ts';
 // LockstepSession is the session's name from before rollback; the game's existing code still uses it.
 export {
   MatchSession,

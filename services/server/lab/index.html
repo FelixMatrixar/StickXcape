@@ -89,7 +89,7 @@
     </section>
 
     <section id="room" class="card" hidden>
-      <div class="invite"><span class="muted small">Invite</span><a id="link"></a><button id="share">Share</button></div>
+      <div class="invite" id="invite"><span class="muted small">Invite</span><a id="link"></a><button id="share">Share</button></div>
       <ul id="players"></ul>
       <p id="status" role="status"></p>
       <div class="row">
@@ -123,6 +123,8 @@
       <div class="row">
         <button id="account-create" hidden>Make a passkey</button>
         <button id="account-signin" hidden>Sign in with a passkey</button>
+        <button id="account-quick" class="primary" hidden>Quick match a stranger</button>
+        <button id="account-cancel" hidden>Stop looking</button>
         <button id="account-save" hidden>Save the toy move to my cloud library</button>
         <button id="account-signout" hidden>Sign out</button>
       </div>

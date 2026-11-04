@@ -3,6 +3,7 @@ import type { Server as HttpsServer } from 'node:https';
 import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyHttpsOptions, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import { registerAccountRoutes } from './accounts/routes.ts';
+import { MoveSigner } from './accounts/signing.ts';
 import { AccountStore } from './accounts/store.ts';
 import { AiGateway } from './ai/gateway.ts';
 import { registerAiRoutes } from './ai/routes.ts';
@@ -75,11 +76,14 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
     now,
     onChange: alertNotifier(config.monitoring.alertWebhookUrl, config.monitoring.aiErrorWindowMs, fetchFn, app.log),
   });
-  const relay = new Relay({ config: config.relay, minClientVersion: config.minClientVersion, rooms, metrics, log: app.log, now });
   const ai = new AiGateway({ config: config.ai, metrics, alert, log: app.log, fetch: fetchFn, now });
   const accounts = config.accounts.databaseFile ? new AccountStore(config.accounts.databaseFile, now) : null;
+  // The signing key is kept with the accounts, so signed moves stay valid across restarts.
+  const signer = accounts ? new MoveSigner(accounts.secret('move-signing-key')) : null;
+  const relay = new Relay({ config: config.relay, minClientVersion: config.minClientVersion, rooms, metrics, log: app.log, now, accounts, signer, ai });
 
   metrics.registry.gauge('sticxcape_rooms_active', 'Rooms held right now', () => rooms.size);
+  metrics.registry.gauge('sticxcape_quick_match_waiting', 'Players waiting for a quick match', () => relay.queueSize);
   if (accounts) metrics.registry.gauge('sticxcape_accounts', 'Accounts stored', () => accounts.accountCount);
   metrics.registry.gauge('sticxcape_players_connected', 'Phones connected to the relay', () => relay.connectionCount);
   metrics.registry.gauge('sticxcape_matches_active', 'Matches being played right now', () => relay.matchCount);
@@ -92,9 +96,9 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<{ ap
   addSecurityHeaders(app, config.env === 'production');
 
   const roomLimiter = registerRoomRoutes(app, { config, rooms, metrics, now });
-  registerRelayRoutes(app, { relay, allowedOrigins: config.allowedOrigins });
+  registerRelayRoutes(app, { relay, allowedOrigins: config.allowedOrigins, accounts });
   registerAiRoutes(app, { gateway: ai });
-  const accountRoutes = registerAccountRoutes(app, { config, store: accounts, metrics, now });
+  const accountRoutes = registerAccountRoutes(app, { config, store: accounts, signer, metrics, now });
   registerMonitoringRoutes(app, { config, metrics, rooms, relay, ai, alert });
   app.get('/version', async () => ({ minClientVersion: config.minClientVersion, serverVersion: config.serverVersion }));
   registerWeb(app, { webRoot: config.webRoot, labRoot: config.labRoot });

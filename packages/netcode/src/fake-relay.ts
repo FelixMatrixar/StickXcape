@@ -100,11 +100,19 @@ export function createFakeRelay(options: FakeRelayOptions = {}): RelayTransport 
           ready = false;
           deliver({ type: 'end', winner: message.winner, reason: 'finished' });
           return deliver({ type: 'room', room: room() });
+        // Quick match finds Echo at once, so the quick match screens can be built offline.
+        case 'quickmatch':
+          nickname = cleanText(message.nickname, NICKNAME_MAX_LENGTH) ?? nickname;
+          deliver({ type: 'queued' });
+          deliver({ type: 'joined', player: 1, host: true, room: room() });
+          return deliver({ type: 'matched', opponent: { id: 'echo-fake-relay0', nickname: opponentName } });
         case 'ping':
           return deliver({ type: 'pong', time: message.time });
         case 'pong':
         // Echo replays your own inputs, so it has no clock of its own to keep in step with.
         case 'sync':
+        case 'cancelmatch':
+        case 'leave':
           return;
       }
     },

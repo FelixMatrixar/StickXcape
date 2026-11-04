@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { AccountInfo, CloudMove, CloudMoveInput, LibraryResponse, LoadoutSelection, MoveFile } from '@sticxcape/shared';
+import type { AccountInfo, BlockedPlayer, CloudMove, CloudMoveInput, LibraryResponse, LoadoutSelection, MoveFile, ReportReason } from '@sticxcape/shared';
 import type { NewCredential, StoredCredential } from './webauthn.ts';
 
 export interface CredentialRecord extends StoredCredential {
@@ -54,7 +54,50 @@ const MIGRATIONS = [
      selection TEXT NOT NULL,
      updated_at INTEGER NOT NULL
    );`,
+  // Quick match: a hidden skill rating, blocks, reports, a record of each match, and server secrets.
+  `ALTER TABLE accounts ADD COLUMN rating REAL NOT NULL DEFAULT 1000;
+   ALTER TABLE accounts ADD COLUMN games INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE blocks (
+     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+     blocked_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (account_id, blocked_id)
+   );
+   CREATE INDEX blocks_blocked ON blocks(blocked_id);
+   CREATE TABLE reports (
+     id INTEGER PRIMARY KEY,
+     reporter_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+     reported_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+     reason TEXT NOT NULL,
+     note TEXT,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX reports_reporter ON reports(reporter_id, created_at);
+   CREATE TABLE quick_matches (
+     id INTEGER PRIMARY KEY,
+     left_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+     right_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+     winner_id TEXT,
+     reason TEXT NOT NULL,
+     ended_at INTEGER NOT NULL
+   );
+   CREATE TABLE secrets (
+     name TEXT PRIMARY KEY,
+     value BLOB NOT NULL
+   );`,
 ];
+
+/** Elo from 1000: new players' ratings move fast (K 40 for their first 10 games), then settle (K 20). */
+const NEW_PLAYER_GAMES = 10;
+
+function kFactor(games: number): number {
+  return games < NEW_PLAYER_GAMES ? 40 : 20;
+}
+
+export interface Rating {
+  rating: number;
+  games: number;
+}
 
 /**
  * Accounts, their passkeys, sign-in sessions and cloud move libraries, in one SQLite file
@@ -215,6 +258,85 @@ export class AccountStore {
     this.db
       .prepare('INSERT INTO loadouts (account_id, selection, updated_at) VALUES (?, ?, ?) ON CONFLICT (account_id) DO UPDATE SET selection = excluded.selection, updated_at = excluded.updated_at')
       .run(accountId, JSON.stringify(selection), this.now());
+  }
+
+  // Quick match.
+
+  rating(accountId: string): Rating | undefined {
+    return this.db.prepare('SELECT rating, games FROM accounts WHERE id = ?').get(accountId) as Rating | undefined;
+  }
+
+  /**
+   * Records a finished quick match and moves both ratings (Elo). `winnerId` is null for a draw.
+   * Returns the new ratings, left then right, or null when an account no longer exists.
+   */
+  recordQuickMatch(leftId: string, rightId: string, winnerId: string | null, reason: string): [Rating, Rating] | null {
+    let result: [Rating, Rating] | null = null;
+    this.transaction(() => {
+      this.db
+        .prepare('INSERT INTO quick_matches (left_id, right_id, winner_id, reason, ended_at) VALUES (?, ?, ?, ?, ?)')
+        .run(leftId, rightId, winnerId, reason, this.now());
+      const left = this.rating(leftId);
+      const right = this.rating(rightId);
+      if (!left || !right) return;
+      const score = winnerId === leftId ? 1 : winnerId === rightId ? 0 : 0.5;
+      const expected = 1 / (1 + 10 ** ((right.rating - left.rating) / 400));
+      const next: [Rating, Rating] = [
+        { rating: left.rating + kFactor(left.games) * (score - expected), games: left.games + 1 },
+        { rating: right.rating + kFactor(right.games) * (expected - score), games: right.games + 1 },
+      ];
+      const update = this.db.prepare('UPDATE accounts SET rating = ?, games = ? WHERE id = ?');
+      update.run(next[0].rating, next[0].games, leftId);
+      update.run(next[1].rating, next[1].games, rightId);
+      result = next;
+    });
+    return result;
+  }
+
+  /** False when the player doesn't exist or is the account itself. */
+  block(accountId: string, blockedId: string): boolean {
+    if (accountId === blockedId || !this.getAccount(blockedId)) return false;
+    this.db.prepare('INSERT OR IGNORE INTO blocks (account_id, blocked_id, created_at) VALUES (?, ?, ?)').run(accountId, blockedId, this.now());
+    return true;
+  }
+
+  unblock(accountId: string, blockedId: string): boolean {
+    return Number(this.db.prepare('DELETE FROM blocks WHERE account_id = ? AND blocked_id = ?').run(accountId, blockedId).changes) > 0;
+  }
+
+  blockedPlayers(accountId: string): BlockedPlayer[] {
+    const rows = this.db
+      .prepare('SELECT a.id, a.name, b.created_at FROM blocks b JOIN accounts a ON a.id = b.blocked_id WHERE b.account_id = ? ORDER BY b.created_at DESC')
+      .all(accountId) as { id: string; name: string; created_at: number }[];
+    return rows.map((row) => ({ id: row.id, name: row.name, blockedAt: row.created_at }));
+  }
+
+  /** Everyone this account blocked or was blocked by: quick match never pairs them. */
+  blockedEitherWay(accountId: string): Set<string> {
+    const rows = this.db
+      .prepare('SELECT blocked_id AS id FROM blocks WHERE account_id = ? UNION SELECT account_id AS id FROM blocks WHERE blocked_id = ?')
+      .all(accountId, accountId) as { id: string }[];
+    return new Set(rows.map((row) => row.id));
+  }
+
+  /** False when the reported player doesn't exist. */
+  report(reporterId: string, reportedId: string, reason: ReportReason, note: string | null): boolean {
+    if (reporterId === reportedId || !this.getAccount(reportedId)) return false;
+    this.db.prepare('INSERT INTO reports (reporter_id, reported_id, reason, note, created_at) VALUES (?, ?, ?, ?, ?)').run(reporterId, reportedId, reason, note, this.now());
+    return true;
+  }
+
+  reportsSince(reporterId: string, since: number): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ? AND created_at >= ?').get(reporterId, since) as { n: number }).n;
+  }
+
+  /** A server secret, made on first use and kept with the accounts (the move signing key). */
+  secret(name: string, bytes = 32): Uint8Array {
+    const row = this.db.prepare('SELECT value FROM secrets WHERE name = ?').get(name) as { value: Uint8Array } | undefined;
+    if (row) return new Uint8Array(row.value);
+    const value = new Uint8Array(randomBytes(bytes));
+    this.db.prepare('INSERT OR IGNORE INTO secrets (name, value) VALUES (?, ?)').run(name, value);
+    return this.secret(name, bytes);
   }
 
   private migrate(): void {
