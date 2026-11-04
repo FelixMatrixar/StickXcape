@@ -15,18 +15,29 @@ import type { AiCall, AiOutcome, Metrics } from '../metrics/metrics.ts';
 import { cannedMatchTips, cannedMoveName } from './canned.ts';
 import { AiError, chatJson } from './meta-client.ts';
 import {
+  ARENA_IMAGE_PROMPT,
   MATCH_TIPS_PROMPT,
   MOVE_NAME_PROMPT,
-  NICKNAME_PROMPT,
+  NAME_PROMPT,
+  arenaImageMessages,
   matchTipsMessages,
   moveNameMessages,
-  nicknameMessages,
+  nameMessages,
   type ChatMessage,
   type Prompt,
 } from './prompts.ts';
 
-/** A nickname's verdict: shown to strangers, refused, or not checked (no key, over the limit, or Meta failed). */
-export type NicknameVerdict = 'allowed' | 'blocked' | 'unchecked';
+/** A name's verdict: shown to others, refused, or not checked (no key, over the limit, or Meta failed). */
+export type NameVerdict = 'allowed' | 'blocked' | 'unchecked';
+
+/** A backdrop's verdict, with Meta's reason when it is flagged. */
+export interface ImageVerdict {
+  verdict: 'clear' | 'flagged' | 'unchecked';
+  reason: string | null;
+}
+
+/** Sharing an arena isn't a moment anyone waits on mid-game, so its image check may take longer. */
+const ARENA_CHECK_TIMEOUT_MS = 20_000;
 
 /** The player used up a daily allowance; the client falls back (HTTP 429). */
 export class AiRateLimitedError extends Error {}
@@ -76,29 +87,57 @@ export class AiGateway {
     this.quotas = {
       move_name: { player: new DailyQuota(config.moveNamesPerDay), ip: new DailyQuota(config.moveNamesPerDay * config.perIpMultiplier) },
       match_tips: { player: new DailyQuota(config.matchTipsPerDay), ip: new DailyQuota(config.matchTipsPerDay * config.perIpMultiplier) },
-      nickname_check: { player: new DailyQuota(config.nicknameChecksPerDay), ip: new DailyQuota(config.nicknameChecksPerDay * config.perIpMultiplier) },
+      name_check: { player: new DailyQuota(config.nameChecksPerDay), ip: new DailyQuota(config.nameChecksPerDay * config.perIpMultiplier) },
+      arena_check: { player: new DailyQuota(config.arenaChecksPerDay), ip: new DailyQuota(config.arenaChecksPerDay * config.perIpMultiplier) },
     };
   }
 
   /**
-   * Whether strangers may see a nickname (launch moderation). Never throws: without a key, over
-   * the daily limit, or when Meta fails or is slow, the answer is unchecked, and quick match then
-   * shows a neutral name instead ("block until checked").
+   * Whether other players may see a name: a nickname in quick match, or a shared arena's name
+   * (launch moderation). Never throws: without a key, over the daily limit, or when Meta fails or
+   * is slow, the answer is unchecked, and the caller decides ("block until checked").
    */
-  async checkNickname(nickname: string, who: Requester): Promise<NicknameVerdict> {
+  async checkName(text: string, who: Requester): Promise<NameVerdict> {
     if (this.mode === 'canned') return 'unchecked';
     // Case doesn't change what a name says, so checks are cached without it.
-    const name = nickname.toLowerCase();
+    const name = text.toLowerCase();
     try {
-      const { allowed } = await this.run('nickname_check', NICKNAME_PROMPT, { name }, who, () => ({ allowed: false }), async (signal) => {
-        const reply = await this.chat(NICKNAME_PROMPT, nicknameMessages(name), who, signal);
+      const { allowed } = await this.run('name_check', NAME_PROMPT, { name }, who, () => ({ allowed: false }), async (signal) => {
+        const reply = await this.chat(NAME_PROMPT, nameMessages(name), who, signal);
         if (typeof reply.allowed !== 'boolean') throw new AiError('invalid_response', 'Reply had no verdict');
-        if (!reply.allowed) this.options.log.info({ reason: cleanLine(reply.reason, 80) }, 'nickname blocked');
+        if (!reply.allowed) this.options.log.info({ reason: cleanLine(reply.reason, 80) }, 'name blocked');
         return { allowed: reply.allowed };
       });
       return allowed ? 'allowed' : 'blocked';
     } catch {
       return 'unchecked';
+    }
+  }
+
+  /**
+   * Muse Spark's look at a photo arena's backdrop (a JPEG) before friends may open it (AR-5).
+   * Never throws: unchecked when there is no key, the player is over the limit, or Meta fails.
+   */
+  async checkArenaImage(jpeg: Uint8Array, who: Requester): Promise<ImageVerdict> {
+    if (this.mode === 'canned') return { verdict: 'unchecked', reason: null };
+    const image = `data:image/jpeg;base64,${Buffer.from(jpeg).toString('base64')}`;
+    try {
+      const result = await this.run(
+        'arena_check',
+        ARENA_IMAGE_PROMPT,
+        { image },
+        who,
+        () => ({ safe: false, reason: '' }),
+        async (signal) => {
+          const reply = await this.chat(ARENA_IMAGE_PROMPT, arenaImageMessages(image), who, signal);
+          if (typeof reply.safe !== 'boolean') throw new AiError('invalid_response', 'Reply had no verdict');
+          return { safe: reply.safe, reason: cleanLine(reply.reason, 90) ?? '' };
+        },
+        ARENA_CHECK_TIMEOUT_MS,
+      );
+      return result.safe ? { verdict: 'clear', reason: null } : { verdict: 'flagged', reason: result.reason || null };
+    } catch {
+      return { verdict: 'unchecked', reason: null };
     }
   }
 
@@ -131,6 +170,7 @@ export class AiGateway {
     who: Requester,
     canned: () => T,
     live: (signal: AbortSignal) => Promise<T>,
+    timeoutMs = this.options.config.timeoutMs,
   ): Promise<T> {
     if (this.mode === 'canned') {
       this.count(call, 'canned');
@@ -160,7 +200,7 @@ export class AiGateway {
       throw new AiRateLimitedError();
     }
 
-    const promise = this.callWithRetry(call, prompt, live)
+    const promise = this.callWithRetry(call, prompt, live, timeoutMs)
       .then(
         (value) => {
           this.cache.set(key, value, this.options.now());
@@ -178,10 +218,10 @@ export class AiGateway {
     return promise;
   }
 
-  private async callWithRetry<T>(call: AiCall, prompt: Prompt, live: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const { now, config, log } = this.options;
+  private async callWithRetry<T>(call: AiCall, prompt: Prompt, live: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+    const { now, log } = this.options;
     const started = now();
-    const deadline = started + config.timeoutMs;
+    const deadline = started + timeoutMs;
     for (let attempt = 1; ; attempt += 1) {
       const signal = AbortSignal.timeout(Math.max(1, deadline - now()));
       try {

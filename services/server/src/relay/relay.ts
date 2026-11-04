@@ -258,7 +258,7 @@ export class Relay {
     if (nickname === null) return conn.sendError('bad_nickname', `Nickname must be 1 to ${NICKNAME_MAX_LENGTH} characters`);
 
     conn.seeking = true;
-    const verdict = await ai.checkNickname(nickname, { playerKey: session.account.id, ip: conn.ip });
+    const verdict = await ai.checkName(nickname, { playerKey: session.account.id, ip: conn.ip });
     // Cancelled, joined a room or gone while the check ran.
     if (!conn.seeking || conn.closed || conn.hub) return;
     if (verdict === 'blocked') {

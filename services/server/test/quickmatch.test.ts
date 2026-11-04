@@ -137,7 +137,7 @@ describe('quick match', () => {
     const { anaSaw, boSaw } = await pairUp(server, origin, ['Ana', 'Bo']);
     expect([anaSaw.nickname, boSaw.nickname]).toEqual(['Bo', 'Ana']);
     // Checked once each, in lower case so a name is cached however it is written.
-    expect(meta.asked).toEqual(['Nickname: "a rude name"', 'Nickname: "ana"', 'Nickname: "bo"']);
+    expect(meta.asked).toEqual(['Name: "a rude name"', 'Name: "ana"', 'Name: "bo"']);
   });
 
   it('never pairs players who blocked each other', async () => {
@@ -261,14 +261,14 @@ describe('signing, blocks and reports', () => {
     const { origin } = await serve({}, { now: clock.now });
     const ana = await signedIn(origin, 'Ana');
     const bo = await signedIn(origin, 'Bo');
-    await ana.client.reportPlayer(bo.account.id, 'nickname', 'Their name is a slur');
+    await ana.client.reportPlayer(bo.account.id, 'name', 'Their name is a slur');
     await expect(ana.client.reportPlayer(bo.account.id, 'spam' as 'other')).rejects.toMatchObject({ status: 400, error: 'bad_reason' });
     await expect(ana.client.reportPlayer(bo.account.id, 'other', 'x'.repeat(301))).rejects.toMatchObject({ status: 400, error: 'bad_note' });
     await expect(ana.client.reportPlayer(ana.account.id, 'other')).rejects.toMatchObject({ status: 404 });
-    for (let i = 1; i < 20; i++) await ana.client.reportPlayer(bo.account.id, 'abuse');
-    await expect(ana.client.reportPlayer(bo.account.id, 'abuse')).rejects.toMatchObject({ status: 429 });
+    for (let i = 1; i < 20; i++) await ana.client.reportPlayer(bo.account.id, 'moves');
+    await expect(ana.client.reportPlayer(bo.account.id, 'cheating')).rejects.toMatchObject({ status: 429 });
     clock.advance(24 * 60 * 60 * 1000 + 1);
-    await ana.client.reportPlayer(bo.account.id, 'abuse');
+    await ana.client.reportPlayer(bo.account.id, 'cheating');
   });
 });
 

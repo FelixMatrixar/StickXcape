@@ -2,7 +2,19 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { AccountInfo, BlockedPlayer, CloudMove, CloudMoveInput, LibraryResponse, LoadoutSelection, MoveFile, ReportReason } from '@sticxcape/shared';
+import type {
+  AccountInfo,
+  ArenaFile,
+  ArenaPalette,
+  BlockedPlayer,
+  CloudMove,
+  CloudMoveInput,
+  LibraryResponse,
+  LoadoutSelection,
+  MoveFile,
+  ReportReason,
+  RoomReport,
+} from '@sticxcape/shared';
 import type { NewCredential, StoredCredential } from './webauthn.ts';
 
 export interface CredentialRecord extends StoredCredential {
@@ -85,7 +97,42 @@ const MIGRATIONS = [
      name TEXT PRIMARY KEY,
      value BLOB NOT NULL
    );`,
+  // Shared photo arenas, and reports from friend rooms (where players have only a nickname).
+  `CREATE TABLE shared_arenas (
+     id TEXT PRIMARY KEY,
+     file TEXT NOT NULL,
+     palette TEXT NOT NULL,
+     image BLOB NOT NULL,
+     image_hash TEXT NOT NULL,
+     owner_key TEXT NOT NULL,
+     account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+     created_at INTEGER NOT NULL,
+     opened_at INTEGER
+   );
+   CREATE INDEX shared_arenas_owner ON shared_arenas(owner_key);
+   CREATE TABLE room_reports (
+     id INTEGER PRIMARY KEY,
+     reporter_key TEXT NOT NULL,
+     nickname TEXT NOT NULL,
+     reason TEXT NOT NULL,
+     room TEXT,
+     reported_at TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX room_reports_reporter ON room_reports(reporter_key, created_at);`,
 ];
+
+/** Who shared an arena or sent a report: a hash of the phone's player id, never the id itself. */
+export function playerKeyHash(playerId: string): string {
+  return createHash('sha256').update(`player:${playerId}`).digest('hex');
+}
+
+export interface StoredSharedArena {
+  file: ArenaFile;
+  palette: ArenaPalette;
+  imageHash: string;
+  createdAt: number;
+}
 
 /** Elo from 1000: new players' ratings move fast (K 40 for their first 10 games), then settle (K 20). */
 const NEW_PLAYER_GAMES = 10;
@@ -328,6 +375,61 @@ export class AccountStore {
 
   reportsSince(reporterId: string, since: number): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM reports WHERE reporter_id = ? AND created_at >= ?').get(reporterId, since) as { n: number }).n;
+  }
+
+  // Shared photo arenas (AR-7).
+
+  /**
+   * Stores a shared arena under its own id. Sharing again from the same phone is a no-op; an id
+   * someone else already shared is refused, so a link always opens what its sharer made.
+   */
+  shareArena(file: ArenaFile, palette: ArenaPalette, image: Uint8Array, ownerKey: string, accountId: string | null): 'created' | 'already_shared' | 'taken' {
+    const existing = this.db.prepare('SELECT owner_key FROM shared_arenas WHERE id = ?').get(file.id) as { owner_key: string } | undefined;
+    if (existing) return existing.owner_key === ownerKey ? 'already_shared' : 'taken';
+    this.db
+      .prepare('INSERT INTO shared_arenas (id, file, palette, image, image_hash, owner_key, account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(file.id, JSON.stringify(file), JSON.stringify(palette), image, createHash('sha256').update(image).digest('hex'), ownerKey, accountId, this.now());
+    return 'created';
+  }
+
+  /** Who shared the arena with this id (the hashed player id), or undefined. */
+  sharedArenaOwner(id: string): string | undefined {
+    return (this.db.prepare('SELECT owner_key FROM shared_arenas WHERE id = ?').get(id) as { owner_key: string } | undefined)?.owner_key;
+  }
+
+  sharedArena(id: string): StoredSharedArena | undefined {
+    const row = this.db.prepare('SELECT file, palette, image_hash, created_at FROM shared_arenas WHERE id = ?').get(id) as
+      | { file: string; palette: string; image_hash: string; created_at: number }
+      | undefined;
+    if (!row) return undefined;
+    this.db.prepare('UPDATE shared_arenas SET opened_at = ? WHERE id = ?').run(this.now(), id);
+    return { file: JSON.parse(row.file) as ArenaFile, palette: JSON.parse(row.palette) as ArenaPalette, imageHash: row.image_hash, createdAt: row.created_at };
+  }
+
+  sharedArenaImage(id: string): { image: Uint8Array; hash: string } | undefined {
+    const row = this.db.prepare('SELECT image, image_hash FROM shared_arenas WHERE id = ?').get(id) as { image: Uint8Array; image_hash: string } | undefined;
+    return row ? { image: new Uint8Array(row.image), hash: row.image_hash } : undefined;
+  }
+
+  sharedArenaCount(ownerKey: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM shared_arenas WHERE owner_key = ?').get(ownerKey) as { n: number }).n;
+  }
+
+  /** Only the phone that shared an arena can take it down. */
+  deleteSharedArena(id: string, ownerKey: string): boolean {
+    return Number(this.db.prepare('DELETE FROM shared_arenas WHERE id = ? AND owner_key = ?').run(id, ownerKey).changes) > 0;
+  }
+
+  // Reports from friend rooms.
+
+  addRoomReport(reporterKey: string, report: RoomReport): void {
+    this.db
+      .prepare('INSERT INTO room_reports (reporter_key, nickname, reason, room, reported_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(reporterKey, report.nickname, report.reason, report.room, report.at, this.now());
+  }
+
+  roomReportsSince(reporterKey: string, since: number): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM room_reports WHERE reporter_key = ? AND created_at >= ?').get(reporterKey, since) as { n: number }).n;
   }
 
   /** A server secret, made on first use and kept with the accounts (the move signing key). */

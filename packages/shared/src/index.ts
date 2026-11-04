@@ -11,4 +11,5 @@ export * from './rooms.ts';
 export * from './messages.ts';
 export * from './api.ts';
 export * from './account.ts';
+export * from './photo-arena.ts';
 export { cleanText } from './validate.ts';
