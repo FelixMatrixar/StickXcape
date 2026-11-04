@@ -78,8 +78,15 @@ Official arenas ship inside the app. The photo pipeline produces exactly this fo
 | sync | Phone | lateness | Rollback matches only: relay passes it on; the phone running ahead slows down |
 | end | Phone | winner | Relay closes the match; stats go to the AI gateway separately |
 | ping and pong | Both | time | Measures round-trip time |
+| quickmatch | Phone | nickname | Launch, signed in: relay checks the nickname, answers queued, and pairs the phone with a stranger |
+| cancelmatch | Phone | None | Stops a quick match search |
+| leave | Phone | None | Leaves the room, keeping the connection |
+| queued | Relay | None | The phone is in the quick match queue |
+| matched | Relay | opponent (id, nickname) | Paired: sent after joined puts the phone in a new two-player room |
 
 **Buttons** are a 9-bit field: 4 bits for the stick direction, 5 for L, H, S, D and Block. **Input delay** is 3 frames (50 ms) when ping is under 80 ms and up to 6 frames above that, set once at start.
+
+**Quick match (launch, MP-7)** pairs signed-in players on a hidden skill rating and ping, starting within 100 points and 100 ms and widening each second. Its rooms hold two players and take only loadouts of moves the server has signed (`POST /account/moves/sign`). Finished matches move both players' ratings, and leaving one counts as a loss. Strangers see a nickname only after Muse Spark has checked it; otherwise it reads Challenger.
 
 **Rollback (launch, MP-6)** is used for a match only when both phones send `rollback: true` with ready; `start` then has `rollback: 8`. Input delay drops to 2 frames (33 ms), and grows only past about 260 ms between the phones, so a phone never rewinds more than 8 frames. A phone plays frames on a guess of the opponent's input and replays them when the real input differs. It sends a state hash only once that frame's inputs are final, and reports the winner only once the deciding frame is final.
 
@@ -106,6 +113,11 @@ All calls use HTTPS and reply in JSON. A version mismatch on join tells the phon
 | POST /account/passkey/login | ceremony, credential | account, plus the sign-in cookie | 400: expired ceremony; 401: unknown or refused passkey |
 | POST /account/logout | None | account: null | None |
 | DELETE /account | None | Nothing (204); the account, its sign-ins and library are deleted | 401: not signed in |
+| POST /account/moves/sign | moves (1 to 16) | moves, each with a signature | 400: malformed, hash mismatch, or outside the move rules (says which move and why) |
+| GET /account/blocks | None | players (id, name, blockedAt) | 401 |
+| POST /account/blocks | player (account id) | Nothing (204); never matched again, either way round | 404: no such player |
+| DELETE /account/blocks/{id} | None | Nothing (204) | 404: not blocked |
+| POST /account/reports | player, reason (nickname, cheating, abuse or other), note (optional, 300 characters) | reported: true | 404: no such player; 429: over 20 a day |
 | GET /account/library | None | moves (move, kind, description, quality, createdAt, updatedAt), loadout | 401 |
 | PUT /account/library/moves/{id} | move, kind (move or idle), description, quality, createdAt | updatedAt | 400: malformed or hash mismatch; 409: library full (200 moves) |
 | DELETE /account/library/moves/{id} | None | Nothing (204) | 404: not in the library |
