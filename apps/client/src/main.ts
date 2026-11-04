@@ -7,12 +7,17 @@ import { roomCodeFromPath } from '@sticxcape/shared';
 import { flow } from './app/flow.ts';
 import { initRouter } from './app/router.ts';
 import { audio } from './audio/engine.ts';
+import { flushReports } from './app/social.ts';
 import { library } from './moves/library.ts';
 import { initOverlay } from './ui/overlay.ts';
+import { registerBlockedSettings } from './ui/social-ui.ts';
 
 const root = document.getElementById('app')!;
 initRouter(root);
 initOverlay(document.body);
+registerBlockedSettings();
+// Reports that couldn't be sent last time go out now, quietly.
+void flushReports();
 
 // Sound waits for the first tap or key anywhere.
 const unlock = () => audio.unlock();

@@ -3097,3 +3097,28 @@ input[type='range'].slider {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Report and block */
+
+.trust-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font: 600 12.5px/1.3 var(--ui);
+}
+
+.trust-row .muted {
+  margin-right: 4px;
+}
+
+.report-reasons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.tag-blocked {
+  background: var(--red);
+  color: #fff;
+}

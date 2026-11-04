@@ -7,6 +7,7 @@ import type { MatchEndMessage, RoomInfo } from '@sticxcape/shared';
 import { relayErrorText, type OnlineRoom } from '../app/online.ts';
 import { myInk } from '../app/player.ts';
 import type { Screen } from '../app/router.ts';
+import { isBlocked } from '../app/social.ts';
 import { settings, updateSettings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import { ui } from '../audio/sfx.ts';
@@ -124,6 +125,7 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
           h('span', { class: 'player-name', text: p.nickname }),
           mine ? h('span', { class: 'tag', text: 'You' }) : null,
           p.host ? h('span', { class: 'tag tag-mid', text: 'Host' }) : null,
+          !mine && isBlocked(p.nickname) ? h('span', { class: 'tag tag-blocked', text: 'Blocked' }) : null,
           h('span', { class: `ready-badge${p.ready || fighting ? ' is-ready' : ''}`, text: badge }),
         );
         return row;
@@ -132,11 +134,15 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
     const next = info.queue.slice(0, 2);
     const myTurn = me !== null && next.length === 2 && next.includes(me);
     const rematch = lastEnd !== null && myTurn;
+    // Never fight someone you blocked.
+    const opponent = myTurn ? next.find((p) => p !== me) : undefined;
+    const blockedOpponent = opponent !== undefined && isBlocked(nameOf(info, opponent));
     readyButton.replaceChildren(rematch ? 'Rematch' : 'Ready');
-    readyButton.disabled = !myTurn || info.fighters !== null || readyPressed;
-    readyButton.classList.toggle('pulse', myTurn && !readyPressed && info.players.length >= 2);
+    readyButton.disabled = !myTurn || info.fighters !== null || readyPressed || blockedOpponent;
+    readyButton.classList.toggle('pulse', myTurn && !readyPressed && info.players.length >= 2 && !blockedOpponent);
     let text: string;
-    if (info.fighters) text = `${nameOf(info, info.fighters[0])} vs ${nameOf(info, info.fighters[1])}: fight in progress.`;
+    if (blockedOpponent) text = `You blocked ${nameOf(info, opponent)}. Unblock them in Settings to fight, or leave the room.`;
+    else if (info.fighters) text = `${nameOf(info, info.fighters[0])} vs ${nameOf(info, info.fighters[1])}: fight in progress.`;
     else if (info.players.length < 2) text = 'Waiting for someone to open the invite link…';
     else if (!myTurn) text = `${nameOf(info, next[0])} and ${nameOf(info, next[1])} fight next. Winner stays on.`;
     else if (readyPressed) text = `Waiting for ${nameOf(info, next.find((p) => p !== me))} to tap Ready…`;
