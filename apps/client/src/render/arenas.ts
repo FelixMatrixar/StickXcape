@@ -447,11 +447,32 @@ function dojo(): ArenaArt {
 const BOX_FRONT = -0.5;
 const BOX_BACK = 0.85;
 
+/** Colours for a ledge block's faces. */
+export interface BlockColours {
+  side: string;
+  topBack: string;
+  topFront: string;
+  frontTop: string;
+  frontBottom: string;
+  /** Light along the top front edge, so the standing surface reads clearly. */
+  rim: string;
+}
+
+const AC_COLOURS: BlockColours = {
+  side: '#35293a',
+  topBack: '#7a6578',
+  topFront: '#9a8296',
+  frontTop: '#68546a',
+  frontBottom: '#423445',
+  rim: 'rgba(255, 222, 200, 0.55)',
+};
+
 /**
- * An air-conditioning unit: a ledge (AR-6) drawn as a box through the fight plane. The side
- * facing the camera shows, the top catches the dusk light, and the fan turns.
+ * A ledge (AR-6) drawn as a box through the fight plane, so fighters stand on its top: a contact
+ * shadow, the side facing the camera, a lit top and the front face. `detail` draws on the front
+ * face before the rim light goes on.
  */
-function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number, x1: number, top: number, t: number): void {
+export function drawBlock(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number, x1: number, top: number, c: BlockColours, detail?: () => void): void {
   const quad = (pts: [number, number, number][]) => {
     ctx.beginPath();
     pts.forEach(([x, y, d], i) => (i === 0 ? ctx.moveTo(cam.sx(x, d), cam.sy(y, d)) : ctx.lineTo(cam.sx(x, d), cam.sy(y, d))));
@@ -461,7 +482,7 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
   ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(24, 16, 26, 0.75)';
   ctx.lineWidth = Math.max(1, cam.ppm * 0.012);
-  // Contact shadow on the roof.
+  // Contact shadow on the floor.
   ctx.fillStyle = 'rgba(16, 10, 18, 0.35)';
   quad([
     [x0 - 0.08, 0, BOX_FRONT - 0.12],
@@ -473,7 +494,7 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
   // The side that faces the camera.
   const side = cam.x < x0 ? x0 : cam.x > x1 ? x1 : null;
   if (side !== null) {
-    ctx.fillStyle = '#35293a';
+    ctx.fillStyle = c.side;
     quad([
       [side, 0, BOX_FRONT],
       [side, 0, BOX_BACK],
@@ -483,12 +504,12 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
     ctx.fill();
     ctx.stroke();
   }
-  // Top: lit from the sky, brightest along the front edge.
+  // Top: lit from above, brightest along the front edge.
   const topFront = cam.sy(top, BOX_FRONT);
   const topBack = cam.sy(top, BOX_BACK);
   const lit = ctx.createLinearGradient(0, topBack, 0, topFront);
-  lit.addColorStop(0, '#7a6578');
-  lit.addColorStop(1, '#9a8296');
+  lit.addColorStop(0, c.topBack);
+  lit.addColorStop(1, c.topFront);
   ctx.fillStyle = lit;
   quad([
     [x0, top, BOX_FRONT],
@@ -502,8 +523,8 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
   const fy0 = cam.sy(top, BOX_FRONT);
   const fy1 = cam.sy(0, BOX_FRONT);
   const body = ctx.createLinearGradient(0, fy0, 0, fy1);
-  body.addColorStop(0, '#68546a');
-  body.addColorStop(1, '#423445');
+  body.addColorStop(0, c.frontTop);
+  body.addColorStop(1, c.frontBottom);
   ctx.fillStyle = body;
   quad([
     [x0, 0, BOX_FRONT],
@@ -513,44 +534,9 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
   ]);
   ctx.fill();
   ctx.stroke();
-  const k = cam.k(BOX_FRONT);
-  const w = x1 - x0;
-  // Vent slats on the left, a fan on the right.
-  ctx.strokeStyle = 'rgba(28, 20, 30, 0.7)';
-  ctx.lineWidth = Math.max(1, k * 0.018);
-  ctx.beginPath();
-  for (let i = 1; i <= 4; i++) {
-    const y = cam.sy((top * i) / 5, BOX_FRONT);
-    ctx.moveTo(cam.sx(x0 + 0.08, BOX_FRONT), y);
-    ctx.lineTo(cam.sx(x0 + w * 0.4, BOX_FRONT), y);
-  }
-  ctx.stroke();
-  const fx = cam.sx(x0 + w * 0.7, BOX_FRONT);
-  const fy = cam.sy(top * 0.5, BOX_FRONT);
-  const r = top * 0.36 * k;
-  ctx.fillStyle = '#2a2030';
-  ctx.beginPath();
-  ctx.arc(fx, fy, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#5a485b';
-  for (let i = 0; i < 4; i++) {
-    const a = t * 6 + (i * Math.PI) / 2;
-    ctx.beginPath();
-    ctx.ellipse(fx + Math.cos(a) * r * 0.48, fy + Math.sin(a) * r * 0.48, r * 0.42, r * 0.16, a, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.fillStyle = '#7d6a7c';
-  ctx.beginPath();
-  ctx.arc(fx, fy, r * 0.14, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#7d6a7c';
-  ctx.lineWidth = Math.max(1, k * 0.022);
-  ctx.beginPath();
-  ctx.arc(fx, fy, r, 0, Math.PI * 2);
-  ctx.stroke();
-  // Rim light along the top front edge, so the standing surface reads clearly.
-  ctx.strokeStyle = 'rgba(255, 222, 200, 0.55)';
-  ctx.lineWidth = Math.max(1.5, k * 0.02);
+  detail?.();
+  ctx.strokeStyle = c.rim;
+  ctx.lineWidth = Math.max(1.5, cam.k(BOX_FRONT) * 0.02);
   ctx.beginPath();
   ctx.moveTo(cam.sx(x0, BOX_FRONT), topFront);
   ctx.lineTo(cam.sx(x1, BOX_FRONT), topFront);
@@ -558,8 +544,49 @@ function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number,
   ctx.restore();
 }
 
+/** An air-conditioning unit: a rooftop ledge with vent slats and a turning fan. */
+function drawAcUnit(ctx: CanvasRenderingContext2D, cam: FightCamera, x0: number, x1: number, top: number, t: number): void {
+  drawBlock(ctx, cam, x0, x1, top, AC_COLOURS, () => {
+    const k = cam.k(BOX_FRONT);
+    const w = x1 - x0;
+    // Vent slats on the left, a fan on the right.
+    ctx.strokeStyle = 'rgba(28, 20, 30, 0.7)';
+    ctx.lineWidth = Math.max(1, k * 0.018);
+    ctx.beginPath();
+    for (let i = 1; i <= 4; i++) {
+      const y = cam.sy((top * i) / 5, BOX_FRONT);
+      ctx.moveTo(cam.sx(x0 + 0.08, BOX_FRONT), y);
+      ctx.lineTo(cam.sx(x0 + w * 0.4, BOX_FRONT), y);
+    }
+    ctx.stroke();
+    const fx = cam.sx(x0 + w * 0.7, BOX_FRONT);
+    const fy = cam.sy(top * 0.5, BOX_FRONT);
+    const r = top * 0.36 * k;
+    ctx.fillStyle = '#2a2030';
+    ctx.beginPath();
+    ctx.arc(fx, fy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#5a485b';
+    for (let i = 0; i < 4; i++) {
+      const a = t * 6 + (i * Math.PI) / 2;
+      ctx.beginPath();
+      ctx.ellipse(fx + Math.cos(a) * r * 0.48, fy + Math.sin(a) * r * 0.48, r * 0.42, r * 0.16, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#7d6a7c';
+    ctx.beginPath();
+    ctx.arc(fx, fy, r * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#7d6a7c';
+    ctx.lineWidth = Math.max(1, k * 0.022);
+    ctx.beginPath();
+    ctx.arc(fx, fy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+}
+
 /** A perspective floor from the horizon down to the bottom of the screen. */
-function drawFloor(
+export function drawFloor(
   ctx: CanvasRenderingContext2D,
   cam: FightCamera,
   back: number,
@@ -672,9 +699,29 @@ export function allArenas(): ArenaArt[] {
   return (arenas ??= [rooftop(), dojo()]);
 }
 
+/** Photo arenas on this phone, registered as they load (AR-4). */
+const photos = new Map<string, ArenaArt>();
+
+export function registerArena(art: ArenaArt): void {
+  photos.set(art.id, art);
+}
+
+export function unregisterArena(id: string): void {
+  photos.delete(id);
+}
+
+export function photoArenaArts(): ArenaArt[] {
+  return [...photos.values()];
+}
+
+/** Official arenas ship with the game; only these go to online rooms until arena sharing is live. */
+export function isOfficialArena(id: string | null | undefined): boolean {
+  return (ARENA_IDS as readonly string[]).includes(id ?? '');
+}
+
 export function arenaById(id: string | null | undefined): ArenaArt {
   const list = allArenas();
-  return list.find((a) => a.id === id) ?? list[0];
+  return list.find((a) => a.id === id) ?? photos.get(id ?? '') ?? list[0];
 }
 
 export const ARENA_IDS = ['rooftop', 'dojo'] as const;

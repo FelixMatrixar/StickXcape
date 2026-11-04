@@ -1278,7 +1278,7 @@ input[type='range'].slider {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr;
+  grid-template-columns: 1.25fr 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr;
   gap: clamp(10px, 2vw, 18px);
 }
@@ -3121,4 +3121,201 @@ input[type='range'].slider {
 .tag-blocked {
   background: var(--red);
   color: #fff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Photo arenas */
+
+.arena-studio {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.arena-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arena-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-auto-rows: min-content;
+  gap: clamp(10px, 1.8vw, 16px);
+  overflow-y: auto;
+  padding: 2px 8px 8px 2px;
+}
+
+.arena-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  font: 600 12.5px/1.4 var(--ui);
+}
+
+.arena-intro .btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.arena-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.arena-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 8;
+  object-fit: cover;
+  object-position: center 70%;
+  border-bottom: 2px solid var(--ink);
+  background: #2a2427;
+}
+
+.arena-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 4px;
+}
+
+.arena-card-body b {
+  font: 400 22px/1 var(--display);
+  text-transform: uppercase;
+}
+
+.arena-card-body small {
+  font: 600 11.5px/1.3 var(--ui);
+}
+
+.arena-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 12px;
+}
+
+.arena-camera {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #1b1916;
+  border: 2px solid var(--ink);
+}
+
+.arena-camera video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.fight-line {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 78%;
+  border-top: 3px dashed rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+.fight-line span {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(20, 16, 18, 0.7);
+  color: #fff;
+  font: 700 11.5px/1.2 var(--ui);
+}
+
+.arena-camera-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #fff;
+}
+
+.arena-camera-bar .muted {
+  color: rgba(255, 255, 255, 0.8);
+  font: 600 12px/1.3 var(--ui);
+  max-width: 22ch;
+}
+
+.arena-working {
+  align-self: center;
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  margin: auto 0;
+}
+
+.arena-working h2 {
+  font: 400 clamp(24px, 5vh, 34px) / 1 var(--display);
+  text-transform: uppercase;
+}
+
+.step-line .spinner {
+  border-color: rgba(0, 0, 0, 0.15);
+  border-top-color: var(--ink);
+}
+
+.arena-edit {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+  gap: clamp(10px, 1.8vw, 16px);
+}
+
+.arena-preview-wrap {
+  min-height: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  background: #2a2427;
+}
+
+.arena-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.arena-controls {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.ledge-list {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (orientation: portrait) {
+  .arena-edit {
+    grid-template-columns: 1fr;
+    grid-template-rows: 40vh auto;
+  }
 }

@@ -6,6 +6,7 @@
 import { parseMoveFile } from '@sticxcape/shared';
 import { moveHash } from '../moves/hash.ts';
 import { library, type StoredMove } from '../moves/library.ts';
+import { LOADOUT_KEYS } from '../moves/loadout.ts';
 import { settings, updateSettings } from './settings.ts';
 
 type Cleanup = () => Promise<void> | void;
@@ -90,10 +91,11 @@ export async function restoreBackup(text: string): Promise<number> {
     await library.save({ move, createdAt: Number(item.createdAt) || Date.now(), description: typeof item.description === 'string' ? item.description : null, quality: typeof item.quality === 'number' ? item.quality : null, kind: item.kind === 'idle' ? 'idle' : 'move' });
     added += 1;
   }
-  // Put the loadout back where its moves are now on this phone.
+  // Put the loadout back where its moves are now on this phone (known places only).
   const loadout = { ...settings.loadout };
+  const places = new Set<string>(LOADOUT_KEYS.map((k) => k.key));
   for (const [key, id] of Object.entries(data.loadout ?? {})) {
-    if (typeof id === 'string' && library.get(id)) (loadout as Record<string, string>)[key] = id;
+    if (places.has(key) && typeof id === 'string' && library.get(id)) (loadout as Record<string, string>)[key] = id;
   }
   const idle = typeof data.idleStance === 'string' && library.get(data.idleStance)?.kind === 'idle' ? data.idleStance : settings.idleStance;
   updateSettings({ loadout, idleStance: idle });

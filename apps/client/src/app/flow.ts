@@ -12,6 +12,8 @@ import { loadoutScreen } from '../screens/loadout.ts';
 import { nicknameScreen } from '../screens/nickname.ts';
 import { resultsScreen } from '../screens/results.ts';
 import { roomScreen } from '../screens/room.ts';
+import { arenaStudioScreen } from '../screens/arena-studio.ts';
+import { photoArenas } from '../arenas/store.ts';
 import { startScreen } from '../screens/start.ts';
 import { studioScreen } from '../screens/studio.ts';
 import { titleScreen } from '../screens/title.ts';
@@ -22,6 +24,7 @@ import { show } from './router.ts';
 import { settings, updateSettings } from './settings.ts';
 
 let invite: string | null = null;
+let sharedArena: string | null = null;
 
 function setPath(path: string): void {
   try {
@@ -32,8 +35,9 @@ function setPath(path: string): void {
 }
 
 export const flow = {
-  boot(code: string | null): void {
+  boot(code: string | null, arena: string | null = null): void {
     invite = code;
+    sharedArena = arena;
     void show(() => titleScreen(() => flow.afterTitle()), 'none');
   },
 
@@ -46,6 +50,10 @@ export const flow = {
       void show(() => nicknameScreen(() => flow.afterTitle(), { step: 'Before you play' }));
     } else if (invite) {
       flow.room(invite);
+    } else if (sharedArena) {
+      const id = sharedArena;
+      sharedArena = null;
+      void flow.sharedArena(id);
     } else {
       flow.home();
     }
@@ -73,6 +81,7 @@ export const flow = {
         joinRoom: (code) => flow.room(code),
         studio: () => flow.studio(),
         loadout: () => flow.loadout(),
+        arenas: () => flow.arenas(),
         editName: () => void show(() => nicknameScreen(() => flow.home(), { step: 'Your fighter', editing: true })),
       }),
     );
@@ -97,6 +106,28 @@ export const flow = {
         onQuit: () => flow.home(),
       }),
     );
+  },
+
+  /** Photo arenas (AR-4): make one from a photo, fight there, or share it. */
+  arenas(): void {
+    setPath('/');
+    void show(() =>
+      arenaStudioScreen({
+        back: () => flow.home(),
+        fight: () => flow.practice(),
+      }),
+    );
+  },
+
+  /** A friend's shared arena link (/a/{id}): add it to this phone, then show your arenas. */
+  async sharedArena(id: string): Promise<void> {
+    try {
+      const row = await photoArenas.fetchShared(id);
+      toast(`Added ${row.file.name} to your arenas.`, 'good');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'That arena couldn’t be loaded.', 'error', 4200);
+    }
+    flow.arenas();
   },
 
   results(result: FightResult, options: { rematch: () => void; rematchLabel?: string }): void {

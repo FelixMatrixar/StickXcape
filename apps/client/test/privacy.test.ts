@@ -23,13 +23,13 @@ describe('your data (privacy)', () => {
         { move: good, createdAt: 1, description: null, quality: 0.9, kind: 'move' },
         { move: tampered, createdAt: 2, description: null, quality: 0.9, kind: 'move' },
       ],
-      loadout: { light: good.id },
+      loadout: { light1: good.id },
       idleStance: null,
     };
     expect(await restoreBackup(JSON.stringify(file))).toBe(1);
     expect(library.get(good.id)?.move.name).toBe('Thunder Jab');
     expect(library.get(tampered.id)).toBeUndefined();
-    expect(settings.loadout.light).toBe(good.id);
+    expect(settings.loadout.light1).toBe(good.id);
     // Restoring again adds nothing; a backup round-trips.
     expect(await restoreBackup(JSON.stringify(file))).toBe(0);
     expect(backup().moves.some((m) => m.move.id === good.id)).toBe(true);

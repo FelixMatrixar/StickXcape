@@ -32,6 +32,7 @@ export interface VisionModule {
   FilesetResolver: { forVisionTasks(base: string): Promise<unknown> };
   PoseLandmarker: { createFromOptions(fileset: unknown, options: unknown): Promise<PoseLandmarker> };
   ObjectDetector: { createFromOptions(fileset: unknown, options: unknown): Promise<unknown> };
+  FaceDetector: { createFromOptions(fileset: unknown, options: unknown): Promise<unknown> };
 }
 
 const VERSION = '0.10.21';

@@ -8,6 +8,7 @@ import { flow } from './app/flow.ts';
 import { initRouter } from './app/router.ts';
 import { audio } from './audio/engine.ts';
 import { flushReports } from './app/social.ts';
+import { photoArenas } from './arenas/store.ts';
 import { library } from './moves/library.ts';
 import { initOverlay } from './ui/overlay.ts';
 import { registerBlockedSettings } from './ui/social-ui.ts';
@@ -29,4 +30,6 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('dblclick', (e) => e.preventDefault());
 
 const invite = roomCodeFromPath(location.pathname);
-void library.ready.then(() => flow.boot(invite));
+// A friend's photo arena link: /a/{id}.
+const arena = /^\/a\/([a-z0-9-]{1,64})\/?$/.exec(location.pathname)?.[1] ?? null;
+void Promise.all([library.ready, photoArenas.ready]).then(() => flow.boot(invite, arena));

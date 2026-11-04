@@ -11,7 +11,7 @@ import { isBlocked } from '../app/social.ts';
 import { settings, updateSettings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import { ui } from '../audio/sfx.ts';
-import { allArenas, arenaById, type ArenaArt } from '../render/arenas.ts';
+import { allArenas, arenaById, isOfficialArena, type ArenaArt } from '../render/arenas.ts';
 import { FightCamera } from '../render/camera.ts';
 import { contrastInk } from '../render/inks.ts';
 import { copyText, h, press, stagger, svg, tilt, toast } from '../ui/dom.ts';
@@ -28,7 +28,8 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
   const right = h('div', { class: 'room-col' });
   const el = h('section', { class: 'room' }, left, right);
   let readyPressed = false;
-  let arenaId = room.client.room?.arenaId ?? settings.arena;
+  // Photo arenas live on one phone until sharing is live, so rooms only use official ones.
+  let arenaId = room.client.room?.arenaId ?? (isOfficialArena(settings.arena) ? settings.arena : 'rooftop');
   const unsubscribe: (() => void)[] = [];
 
   const players = h('div', { class: 'players' });

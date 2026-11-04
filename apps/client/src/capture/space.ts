@@ -109,7 +109,9 @@ interface ObjectDetector {
   close(): void;
 }
 
-const MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
+/** EfficientDet-Lite0 (COCO labels); the photo arena privacy pass uses it too. */
+export const OBJECT_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
+const MODEL = OBJECT_MODEL;
 const LOOK_MS = 500;
 const LOAD_TIMEOUT_MS = 10_000;
 
