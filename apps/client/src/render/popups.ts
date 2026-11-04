@@ -102,10 +102,10 @@ export class Popups {
 }
 
 export const POP = {
-  parry: { fill: '#fff6d8', stroke: '#c48a12', size: 0.34, life: 1.0, tilt: 0.08 } as PopupStyle,
-  counter: { fill: '#ffffff', stroke: '#e8432d', size: 0.26, life: 0.85 } as PopupStyle,
+  parry: { fill: '#fff6d8', stroke: '#e0a21a', size: 0.34, life: 1.0, tilt: 0.08 } as PopupStyle,
+  counter: { fill: '#ffffff', stroke: '#b11d14', size: 0.26, life: 0.85 } as PopupStyle,
   blocked: { fill: '#e9eefc', stroke: '#3a4a74', size: 0.18, life: 0.6 } as PopupStyle,
   whiff: { fill: '#f1ece2', stroke: '#6f6a62', size: 0.17, life: 0.6, rise: 0.5 } as PopupStyle,
-  armor: { fill: '#e8eef3', stroke: '#465663', size: 0.17, life: 0.6 } as PopupStyle,
+  armor: { fill: '#e8eef3', stroke: '#7d8b96', size: 0.17, life: 0.6 } as PopupStyle,
   damage: { fill: '#ffffff', stroke: '#1d1b1a', size: 0.14, life: 0.55, rise: 0.8 } as PopupStyle,
 };

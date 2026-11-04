@@ -1,4 +1,6 @@
 /** Fighter ink colours. You are always drawn in your own; the opponent gets a contrasting one. */
+import { worstDifference } from './colour-vision.ts';
+
 export interface Ink {
   id: string;
   name: string;
@@ -21,23 +23,34 @@ export const INKS: readonly Ink[] = [
   { id: 'sumi', name: 'Sumi', ink: '#1f1d1b', deep: '#000000', glow: '#8c8781', rgb: [31, 29, 27] },
 ];
 
+/**
+ * Each ink's opponent colour. Every pair stays well apart for normal vision and for protan,
+ * deutan and tritan colour blindness (jade and magenta look alike to deutans, so neither is the
+ * other's contrast).
+ */
 const CONTRAST: Record<string, string> = {
   vermillion: 'cobalt',
   cobalt: 'vermillion',
-  jade: 'magenta',
+  jade: 'violet',
   violet: 'amber',
-  magenta: 'jade',
+  magenta: 'sumi',
   amber: 'violet',
   sumi: 'vermillion',
 };
+
+/** Two fighters need at least this CIEDE2000 difference, for every kind of colour vision. */
+export const MIN_INK_DIFFERENCE = 20;
 
 export function inkById(id: string | null | undefined): Ink {
   return INKS.find((ink) => ink.id === id) ?? INKS[0];
 }
 
-/** A colour that stands apart from `mine`, for the opponent. */
+/**
+ * A colour that stands apart from `mine`, for the opponent: their own pick when anyone, colour
+ * blind or not, can tell it from mine; otherwise my ink's designated contrast.
+ */
 export function contrastInk(mine: Ink, theirs?: Ink): Ink {
-  if (theirs && theirs.id !== mine.id) return theirs;
+  if (theirs && theirs.id !== mine.id && worstDifference(mine.ink, theirs.ink) >= MIN_INK_DIFFERENCE) return theirs;
   return inkById(CONTRAST[mine.id]);
 }
 

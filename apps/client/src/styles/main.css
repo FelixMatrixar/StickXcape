@@ -448,19 +448,25 @@ h3 {
   color: var(--ink-2);
 }
 
+/* Height tags: lilac, cream and mint stay apart for colour-blind players; the arrow says it too. */
 .tag-high {
-  background: #ffe1d6;
-  color: #a12b16;
+  background: #f2c4ff;
+  color: #5b2a86;
 }
 
 .tag-mid {
-  background: #fff1c9;
-  color: #8a5a00;
+  background: #fff4cf;
+  color: #6b4a00;
 }
 
 .tag-low {
-  background: #d9ecff;
-  color: #1c4b8f;
+  background: #c6f0e8;
+  color: #0d5c4c;
+}
+
+.tag-glyph {
+  margin-right: 3px;
+  font-size: 8px;
 }
 
 .tag-heavy {

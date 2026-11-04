@@ -11,6 +11,7 @@ import { blendPose, createPose, J, JOINT_COUNT, POSE_SIZE } from '../engine/skel
 import { paperGrain, type ArenaArt } from './arenas.ts';
 import { FightCamera } from './camera.ts';
 import { rgba, type Ink } from './inks.ts';
+import { FX } from './palette.ts';
 import { dust, inkSpray, K, Particles, sparks } from './particles.ts';
 import { POP, Popups } from './popups.ts';
 import { jointsBetween } from './pose.ts';
@@ -326,7 +327,7 @@ export class FightScene {
         ps.spawn(K.burst, x, y, { size: 0.04, size2: 0.16 + s * 0.12, life: 0.16 + s * 0.05, color: '#ffffff', rot: Math.random() * 3 });
         ps.spawn(K.burst, x, y, { size: 0.03, size2: 0.12 + s * 0.11, life: 0.2 + s * 0.06, color: attacker.ink, rot: Math.random() * 3, alpha: 0.9 });
         inkSpray(ps, x, y, dx, dy, 5 + s * 9, 3 + s * 2.5, attacker.ink, 0.02 + s * 0.006);
-        sparks(ps, x, y, 4 + s * 5, 7 + s * 3, s >= 2 ? '#fff4d6' : '#ffffff', dx, dy, 1.6);
+        sparks(ps, x, y, 4 + s * 5, 7 + s * 3, s >= 2 ? FX.hitSpark : '#ffffff', dx, dy, 1.6);
         if (s >= 1) ps.spawn(K.ring, x, y, { size: 0.05, size2: 0.32 + s * 0.12, life: 0.24, color: '#ffffff', alpha: 0.85 });
         if (s >= 2) {
           for (let i = 0; i < 10; i++) {
@@ -338,7 +339,7 @@ export class FightScene {
           this.camera.zoomPunch(0.08);
         }
         if (event.counter) {
-          ps.spawn(K.ring, x, y, { size: 0.08, size2: 0.6, life: 0.32, color: '#e8432d', alpha: 0.9 });
+          ps.spawn(K.ring, x, y, { size: 0.08, size2: 0.6, life: 0.32, color: FX.counterRing, alpha: 0.9 });
           this.popups.show('COUNTER', x, y + 0.42, POP.counter);
         }
         if (event.combo >= 2) {
@@ -366,8 +367,8 @@ export class FightScene {
         const y = fromFixed(event.y);
         const blocker = this.sim.fighters[event.target];
         const facing = blocker.facing;
-        ps.spawn(K.arc, x - facing * 0.06, y, { size: 0.16, size2: 0.32 + event.strength * 0.05, life: 0.3, rot: facing > 0 ? 0 : Math.PI, color: '#cfe0ff', alpha: 0.95 });
-        sparks(ps, x, y, 5 + event.strength * 3, 5, '#dfe9ff', -facing, 0.3, 1.8);
+        ps.spawn(K.arc, x - facing * 0.06, y, { size: 0.16, size2: 0.32 + event.strength * 0.05, life: 0.3, rot: facing > 0 ? 0 : Math.PI, color: FX.blockArc, alpha: 0.95 });
+        sparks(ps, x, y, 5 + event.strength * 3, 5, FX.blockSpark, -facing, 0.3, 1.8);
         this.popups.show('BLOCKED', x, y + 0.36, POP.blocked);
         this.views[event.target].squashVel = 1.5 + event.strength;
         this.views[event.target].squashAngle = facing > 0 ? Math.PI : 0;
@@ -379,10 +380,10 @@ export class FightScene {
       case 'parry': {
         const x = fromFixed(event.x);
         const y = fromFixed(event.y);
-        ps.spawn(K.ring, x, y, { size: 0.06, size2: 0.9, life: 0.42, color: '#fff3c4', alpha: 1 });
+        ps.spawn(K.ring, x, y, { size: 0.06, size2: 0.9, life: 0.42, color: FX.parryRing, alpha: 1 });
         ps.spawn(K.ring, x, y, { size: 0.04, size2: 0.5, life: 0.3, color: '#ffffff', alpha: 1 });
         ps.spawn(K.star, x, y, { size: 0.08, size2: 0.55, life: 0.26, color: '#ffffff', rot: Math.PI / 4 });
-        sparks(ps, x, y, 16, 9, '#ffe9a8');
+        sparks(ps, x, y, 16, 9, FX.parrySpark);
         this.popups.show('PARRY!', x, y + 0.5, POP.parry);
         this.flashAlpha = Math.max(this.flashAlpha, 0.22 * this.flashes);
         const parrier = this.sim.fighters[event.side];
@@ -397,8 +398,8 @@ export class FightScene {
       case 'armor': {
         const x = fromFixed(event.x);
         const y = fromFixed(event.y);
-        sparks(ps, x, y, 8, 6, '#e8f1ff');
-        ps.spawn(K.ring, x, y, { size: 0.04, size2: 0.3, life: 0.2, color: '#c7d6e6' });
+        sparks(ps, x, y, 8, 6, FX.armorSpark);
+        ps.spawn(K.ring, x, y, { size: 0.04, size2: 0.3, life: 0.2, color: FX.armorRing });
         this.popups.show('ARMOR', x, y + 0.36, POP.armor);
         this.views[event.side].flash = 0.6;
         this.sound?.armor(this.pan(x));
