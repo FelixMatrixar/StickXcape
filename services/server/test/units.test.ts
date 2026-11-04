@@ -126,7 +126,7 @@ describe('loadConfig', () => {
   it('has working defaults', () => {
     const config = loadConfig({});
     expect(config).toMatchObject({ env: 'development', host: '0.0.0.0', port: 8080, publicUrl: null, trustProxy: 0, allowedOrigins: [], tls: null });
-    expect(config.ai).toMatchObject({ apiKey: null, model: 'muse-spark-1.3', timeoutMs: 4500, moveNamesPerDay: 30, matchTipsPerDay: 60 });
+    expect(config.ai).toMatchObject({ apiKey: null, model: 'muse-spark-1.1', reasoningEffort: 'minimal', timeoutMs: 4500, moveNamesPerDay: 30, matchTipsPerDay: 60 });
     expect(config.labRoot).not.toBeNull();
   });
 
@@ -138,9 +138,11 @@ describe('loadConfig', () => {
       MODEL_API_BASE_URL: 'https://api.example/v1///',
       LAB: 'off',
       METRICS_PORT: '9091',
+      AI_MODEL: 'muse-spark-1.3',
+      AI_REASONING_EFFORT: 'low',
     });
     expect(config).toMatchObject({ env: 'production', port: 3000, publicUrl: 'https://play.example', allowedOrigins: ['https://play.example'], labRoot: null });
-    expect(config.ai.baseUrl).toBe('https://api.example/v1');
+    expect(config.ai).toMatchObject({ baseUrl: 'https://api.example/v1', model: 'muse-spark-1.3', reasoningEffort: 'low' });
     expect(config.monitoring.metricsPort).toBe(9091);
     expect(loadConfig({ ALLOWED_ORIGINS: 'https://a.example/x, http://b.example:8080' }).allowedOrigins).toEqual(['https://a.example', 'http://b.example:8080']);
   });
@@ -152,5 +154,7 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ PUBLIC_URL: 'play.example' })).toThrow(/PUBLIC_URL must be a URL/);
     expect(() => loadConfig({ PUBLIC_URL: 'ftp://play.example' })).toThrow(/http or https/);
     expect(() => loadConfig({ LAB: 'maybe' })).toThrow('LAB must be true or false');
+    // Muse Spark answers "none" with HTTP 400, so it would turn every AI call into a fallback.
+    expect(() => loadConfig({ AI_REASONING_EFFORT: 'none' })).toThrow('AI_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh, max');
   });
 });

@@ -89,6 +89,16 @@ export interface Config {
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DEFAULT_LAB_ROOT = fileURLToPath(new URL('../dist/lab/', import.meta.url));
 
+/**
+ * Muse Spark 1.1 answered in about 2.3 s (median) in live tests on 2026-11-04, against 3.3 s for
+ * 1.3, whose slowest replies went past the 4.5 s budget and would have fallen back. Same price,
+ * and its names and tips were as good.
+ */
+const DEFAULT_AI_MODEL = 'muse-spark-1.1';
+
+/** The reasoning levels Muse Spark accepts. It rejects "none", which would make every AI call fall back. */
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.NODE_ENV === 'production' || env.NODE_ENV === 'test' ? env.NODE_ENV : 'development';
   const publicUrl = env.PUBLIC_URL ? origin('PUBLIC_URL', env.PUBLIC_URL) : null;
@@ -139,8 +149,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ai: {
       apiKey: env.MODEL_API_KEY || null,
       baseUrl: (env.MODEL_API_BASE_URL || 'https://api.meta.ai/v1').replace(/\/+$/, ''),
-      model: env.AI_MODEL || 'muse-spark-1.3',
-      reasoningEffort: env.AI_REASONING_EFFORT || 'minimal',
+      model: env.AI_MODEL || DEFAULT_AI_MODEL,
+      reasoningEffort: choice(env, 'AI_REASONING_EFFORT', REASONING_EFFORTS, 'minimal'),
       timeoutMs: int(env, 'AI_TIMEOUT_MS', 4500, 500, 30_000),
       moveNamesPerDay: int(env, 'AI_MOVE_NAMES_PER_DAY', 30, 0, 100_000),
       matchTipsPerDay: int(env, 'AI_MATCH_TIPS_PER_DAY', 60, 0, 100_000),
@@ -173,6 +183,14 @@ function flag(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean 
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
   if (['0', 'false', 'no', 'off'].includes(raw)) return false;
   throw new Error(`${name} must be true or false`);
+}
+
+function choice<T extends string>(env: NodeJS.ProcessEnv, name: string, allowed: readonly T[], fallback: T): T {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = allowed.find((option) => option === raw);
+  if (value === undefined) throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
+  return value;
 }
 
 function origin(name: string, value: string): string {
