@@ -102,7 +102,11 @@ class PhotoArenaStore {
       throw new Error('Couldn’t reach the game server. Your arena stays on this phone.');
     }
     if (response.status === 404 || response.status === 405 || response.status === 501) throw new Error('Sharing photo arenas isn’t live on this server yet. Your arena stays on this phone.');
-    if (!response.ok) throw new Error('The server couldn’t take that arena. Try again later.');
+    if (!response.ok) {
+      // The server says why it refused (a name or backdrop Muse Spark won't share, say) in words a player can read.
+      const refusal = (await response.json().catch(() => null)) as { message?: unknown } | null;
+      throw new Error(typeof refusal?.message === 'string' ? refusal.message : 'The server couldn’t take that arena. Try again later.');
+    }
     const body = (await response.json()) as { link?: string; id?: string };
     const link = body.link ?? (body.id ? `${location.origin}/a/${body.id}` : null);
     if (!link) throw new Error('The server didn’t send a link back.');

@@ -9,9 +9,10 @@ import { myInk } from '../app/player.ts';
 import type { Screen } from '../app/router.ts';
 import { isBlocked } from '../app/social.ts';
 import { settings, updateSettings } from '../app/settings.ts';
+import { photoArenas } from '../arenas/store.ts';
 import { music } from '../audio/music.ts';
 import { ui } from '../audio/sfx.ts';
-import { allArenas, arenaById, isOfficialArena, type ArenaArt } from '../render/arenas.ts';
+import { allArenas, arenaById, isOfficialArena, photoArenaArts, type ArenaArt } from '../render/arenas.ts';
 import { FightCamera } from '../render/camera.ts';
 import { contrastInk } from '../render/inks.ts';
 import { copyText, h, press, stagger, svg, tilt, toast } from '../ui/dom.ts';
@@ -28,7 +29,7 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
   const right = h('div', { class: 'room-col' });
   const el = h('section', { class: 'room' }, left, right);
   let readyPressed = false;
-  // Photo arenas live on one phone until sharing is live, so rooms only use official ones.
+  // A new room starts on an official arena; the host can switch to a photo arena (shared first).
   let arenaId = room.client.room?.arenaId ?? (isOfficialArena(settings.arena) ? settings.arena : 'rooftop');
   const unsubscribe: (() => void)[] = [];
 
@@ -68,34 +69,80 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
     status,
   );
 
-  // Arena picker.
+  // Arena picker: the official arenas and this phone's photo arenas. Both fighters must stand on
+  // the same arena, so the host's photo arena is shared before it's picked, and the other
+  // phones load it from the server before they can tap Ready.
   const arenaGrid = h('div', { class: 'arenas' });
   const arenaCards = new Map<string, HTMLButtonElement>();
-  const thumbs: (() => void)[] = [];
-  for (const arena of allArenas()) {
-    const canvas = h('canvas');
-    const card = press(
-      h('button', { class: 'card arena-card is-tappable' }, canvas, h('span', { class: 'check' }, svg(ICON.check)), h('b', { text: arena.name }), h('small', { text: arena.blurb })),
-      () => {
-        if (!room.client.host) {
-          toast('The host picks the arena.');
-          return;
-        }
-        arenaId = arena.id;
-        updateSettings({ arena: arena.id });
-        room.client.setArena(arena.id);
-        renderArenas();
-      },
-      { sound: 'pop' },
+  let thumbs: (() => void)[] = [];
+  let shown = false;
+  let loading: string | null = null;
+  let unloadable: string | null = null;
+
+  const pick = async (arena: ArenaArt) => {
+    if (!room.client.host) {
+      toast('The host picks the arena.');
+      return;
+    }
+    if (arena.id === arenaId) return;
+    if (!isOfficialArena(arena.id)) {
+      if (!photoArenas.get(arena.id)?.shared) toast('Sharing your arena with the room…');
+      try {
+        await photoArenas.share(arena.id);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'That arena couldn’t be shared.', 'error', 4200);
+        return;
+      }
+    }
+    arenaId = arena.id;
+    updateSettings({ arena: arena.id });
+    room.client.setArena(arena.id);
+    renderArenas();
+  };
+
+  const buildArenas = () => {
+    arenaCards.clear();
+    thumbs = [];
+    arenaGrid.replaceChildren(
+      ...[...allArenas(), ...photoArenaArts()].map((arena) => {
+        const canvas = h('canvas');
+        const card = press(
+          h('button', { class: 'card arena-card is-tappable' }, canvas, h('span', { class: 'check' }, svg(ICON.check)), h('b', { text: arena.name }), h('small', { text: arena.blurb })),
+          () => void pick(arena),
+          { sound: 'pop' },
+        );
+        tilt(card, 6);
+        arenaCards.set(arena.id, card);
+        thumbs.push(() => paintArena(canvas, arena));
+        return card;
+      }),
     );
-    tilt(card, 6);
-    arenaCards.set(arena.id, card);
-    arenaGrid.append(card);
-    thumbs.push(() => paintArena(canvas, arena));
-  }
+    if (shown) for (const paint of thumbs) paint();
+    renderArenas();
+  };
   const renderArenas = () => {
     for (const [id, card] of arenaCards) card.classList.toggle('is-on', id === arenaId);
   };
+  const arenaHere = (id: string) => isOfficialArena(id) || photoArenaArts().some((art) => art.id === id);
+
+  /** A friend's photo arena that the room picked: loads it onto this phone, where it joins your arenas. */
+  const loadArena = async (id: string) => {
+    await photoArenas.ready;
+    if (arenaHere(id) || loading === id || unloadable === id) return;
+    loading = id;
+    render();
+    try {
+      const row = await photoArenas.fetchShared(id);
+      toast(`This room fights in ${row.file.name}. It’s in your arenas now.`, 'good');
+    } catch (err) {
+      unloadable = id;
+      toast(err instanceof Error ? err.message : 'The room’s arena couldn’t be loaded.', 'error', 4200);
+    } finally {
+      if (loading === id) loading = null;
+      render();
+    }
+  };
+  buildArenas();
 
   const ink = myInk();
   right.append(
@@ -113,6 +160,9 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
     if (!info) return;
     if (info.arenaId && info.arenaId !== arenaId) arenaId = info.arenaId;
     renderArenas();
+    void loadArena(arenaId);
+    // Never start on an arena this phone doesn't have: it would fight on a different floor.
+    const arenaReady = arenaHere(arenaId);
     const opponentInk = contrastInk(ink);
     players.replaceChildren(
       ...info.players.map((p, i) => {
@@ -139,11 +189,12 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
     const opponent = myTurn ? next.find((p) => p !== me) : undefined;
     const blockedOpponent = opponent !== undefined && isBlocked(nameOf(info, opponent));
     readyButton.replaceChildren(rematch ? 'Rematch' : 'Ready');
-    readyButton.disabled = !myTurn || info.fighters !== null || readyPressed || blockedOpponent;
-    readyButton.classList.toggle('pulse', myTurn && !readyPressed && info.players.length >= 2 && !blockedOpponent);
+    readyButton.disabled = !myTurn || info.fighters !== null || readyPressed || blockedOpponent || !arenaReady;
+    readyButton.classList.toggle('pulse', myTurn && !readyPressed && info.players.length >= 2 && !blockedOpponent && arenaReady);
     let text: string;
     if (blockedOpponent) text = `You blocked ${nameOf(info, opponent)}. Unblock them in Settings to fight, or leave the room.`;
     else if (info.fighters) text = `${nameOf(info, info.fighters[0])} vs ${nameOf(info, info.fighters[1])}: fight in progress.`;
+    else if (!arenaReady) text = unloadable === arenaId ? 'This phone couldn’t load the room’s arena. Ask the host to pick another.' : 'Loading the room’s arena…';
     else if (info.players.length < 2) text = 'Waiting for someone to open the invite link…';
     else if (!myTurn) text = `${nameOf(info, next[0])} and ${nameOf(info, next[1])} fight next. Winner stays on.`;
     else if (readyPressed) text = `Waiting for ${nameOf(info, next.find((p) => p !== me))} to tap Ready…`;
@@ -156,6 +207,7 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
     enter() {
       stagger(left);
       stagger(right);
+      shown = true;
       for (const paint of thumbs) paint();
       music.play('menu');
       if (room.client.host && !room.client.room?.arenaId) room.client.setArena(arenaId);
@@ -167,7 +219,11 @@ export function roomScreen(room: OnlineRoom, actions: RoomActions, lastEnd: Matc
         room.client.on('arena', (id) => {
           arenaId = id;
           if (!room.client.host) ui.pop();
-          renderArenas();
+          render();
+        }),
+        photoArenas.onChange(() => {
+          buildArenas();
+          render();
         }),
         room.client.on('start', (session) => actions.start(session)),
         room.client.on('error', (err) => toast(relayErrorText(err), 'error')),
