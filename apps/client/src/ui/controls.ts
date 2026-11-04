@@ -163,6 +163,14 @@ export class Controls {
     const resize = () => this.layout();
     window.addEventListener('resize', resize);
     this.cleanup.push(() => window.removeEventListener('resize', resize));
+    // Lay out again once the controls are on screen, and whenever their space changes. The stick
+    // rests relative to its zone, which reads as starting at the top until the screen is
+    // attached, and an in-app browser's toolbar can change the space without a window resize.
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(resize);
+      observer.observe(this.el);
+      this.cleanup.push(() => observer.disconnect());
+    }
   }
 
   private bindKeys(): void {

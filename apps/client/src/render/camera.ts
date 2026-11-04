@@ -96,6 +96,8 @@ export class FightCamera {
   }
 
   update(dt: number, targets: CameraTargets, snap = false): void {
+    // A negative step would turn the easing below into overshoot, and the zoom can cross zero.
+    dt = Math.max(0, dt);
     this.time += dt;
     const gap = Math.abs(targets.x1 - targets.x0);
     const span = Math.max(6, Math.min(10, gap + 3.8));

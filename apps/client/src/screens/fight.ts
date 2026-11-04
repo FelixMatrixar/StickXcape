@@ -245,7 +245,9 @@ export function fightScreen(config: FightConfig): Screen {
   let lastStatsAt = 0;
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame);
-    const dt = Math.min(250, now - last);
+    // A frame's timestamp can be older than the last one taken (after the tab was in the
+    // background): never step backwards.
+    const dt = Math.max(0, Math.min(250, now - last));
     last = now;
     if (!paused) {
       if (driver && config.session && !config.session.ended) {

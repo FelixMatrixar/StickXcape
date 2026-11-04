@@ -15,6 +15,17 @@ import { inkById } from '../render/inks.ts';
 import { FightScene } from '../render/scene.ts';
 import { h, svg } from '../ui/dom.ts';
 
+/**
+ * On phones and tablets the game takes the whole screen where the browser allows it, so the
+ * browser's bars, or an in-app browser's toolbar, don't eat into a landscape fight. iPhones
+ * don't allow it for pages, and nothing changes there.
+ */
+function goFullscreen(): void {
+  const root = document.documentElement;
+  if (!matchMedia('(pointer: coarse)').matches || document.fullscreenElement || typeof root.requestFullscreen !== 'function') return;
+  root.requestFullscreen({ navigationUI: 'hide' }).catch(() => undefined);
+}
+
 export function titleScreen(onStart: () => void): Screen {
   const canvas = h('canvas', { class: 'attract', attrs: { 'aria-hidden': 'true' } });
   const letters = 'STICXCAPE'.split('').map((ch, i) => h('span', { class: ch === 'X' ? 'x' : '', style: `--i:${i}`, text: ch }));
@@ -39,7 +50,7 @@ export function titleScreen(onStart: () => void): Screen {
   let acc = 0;
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame);
-    const dt = Math.min(250, now - last);
+    const dt = Math.max(0, Math.min(250, now - last));
     last = now;
     acc = Math.min(acc + dt, 200);
     while (acc >= FRAME_MS) {
@@ -59,6 +70,8 @@ export function titleScreen(onStart: () => void): Screen {
   const start = (event?: PointerEvent | KeyboardEvent) => {
     if (started) return;
     started = true;
+    // Phones only allow full screen when the finger lifts, so ask on that.
+    window.addEventListener('pointerup', goFullscreen, { once: true });
     audio.unlock();
     // Sound is allowed from here on.
     setTimeout(() => ui.confirm(), 30);
