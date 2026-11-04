@@ -109,6 +109,17 @@ describe('quick match', () => {
     expect([quickMatches.get({ outcome: 'paired' }), quickMatches.get({ outcome: 'rated' })]).toEqual([1, 1]);
   });
 
+  it('keeps photo arenas out of quick match, since they are photos of real places', async () => {
+    const { server, origin } = await serve();
+    const { anaRelay, boRelay } = await pairUp(server, origin);
+    const refused = nextEvent(anaRelay, 'error');
+    anaRelay.setArena('7a1c0de0-0000-4000-8000-0000000000aa');
+    expect(await refused).toMatchObject({ code: 'arena_friends_only' });
+    const boHears = nextEvent(boRelay, 'arena');
+    anaRelay.setArena('rooftop');
+    expect(await boHears).toBe('rooftop');
+  });
+
   it('counts leaving a quick match as a loss', async () => {
     const { server, origin } = await serve();
     const { ana, bo, anaRelay, boRelay } = await pairUp(server, origin);

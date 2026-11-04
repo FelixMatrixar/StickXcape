@@ -17,6 +17,7 @@ import {
   parseArenaPalette,
   parseRoomReport,
   photoArenaLayer,
+  isPhotoArenaId,
   parseCloudMove,
   parseLoadoutSelection,
   parsePasskeyAssertion,
@@ -215,6 +216,11 @@ describe('shared photo arenas and room reports', () => {
     }
     expect(parseArenaPalette({ ...palette, ledgeTop: undefined })).toBeNull();
     expect(photoArenaLayer('abc')).toBe('photo:abc');
+  });
+
+  it('tells photo arenas (UUIDs) from built-in ones (short names)', () => {
+    expect(isPhotoArenaId('7a1c0de0-0000-4000-8000-0000000000aa')).toBe(true);
+    for (const id of ['rooftop', 'dojo', 'rooftop-2', '7A1C0DE0-0000-4000-8000-0000000000AA']) expect(isPhotoArenaId(id), id).toBe(false);
   });
 
   it('checks reports from friend rooms', () => {

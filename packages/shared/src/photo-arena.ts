@@ -14,6 +14,17 @@ export function photoArenaLayer(id: string): string {
   return `photo:${id}`;
 }
 
+/**
+ * Photo arenas have UUIDs, so they never clash with the built-in arenas' short names (rooftop,
+ * dojo). In a room, a UUID arena id means a shared photo arena: each phone loads it from
+ * GET /arenas/{id} before getting ready.
+ */
+const PHOTO_ARENA_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function isPhotoArenaId(id: string): boolean {
+  return PHOTO_ARENA_ID_PATTERN.test(id);
+}
+
 /** The backdrop is a JPEG; the phone's are 1280 px wide at quality 0.88, a few hundred KB. */
 export const ARENA_IMAGE_MAX_BYTES = 1_500_000;
 export const ARENA_IMAGE_MAX_SIDE = 2048;

@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import { toyLoadout, type RelayClient } from '@sticxcape/netcode';
 import { ARENA_FORMAT_VERSION, photoArenaLayer, type ArenaFile, type ArenaPalette } from '@sticxcape/shared';
-import { FakeClock, startServer, testConfig, type TestServer } from './helpers.ts';
+import { createRoom, FakeClock, joinRoom, nextEvent, startMatch, startServer, testConfig, type TestServer } from './helpers.ts';
 
 const servers: TestServer[] = [];
+const clients: RelayClient[] = [];
 
 afterEach(async () => {
+  for (const client of clients.splice(0)) client.close();
   for (const server of servers.splice(0)) await server.close();
 });
 
@@ -179,6 +182,62 @@ describe('shared photo arenas', () => {
     servers.push(off);
     expect((await share(off, arena())).status).toBe(503);
     expect((await fetch(`${off.baseUrl}/arenas/${randomUUID()}`)).status).toBe(503);
+  });
+});
+
+describe('photo arenas in friend rooms', () => {
+  async function room(server: TestServer) {
+    const code = await createRoom(server, 'Ana');
+    const ana = await joinRoom(server, code, 'Ana');
+    const bo = await joinRoom(server, code, 'Bo');
+    clients.push(ana, bo);
+    ana.sendLoadout(toyLoadout());
+    bo.sendLoadout(toyLoadout());
+    return { ana, bo };
+  }
+
+  it('lets the host pick a shared photo arena, and refuses one that only their phone has', async () => {
+    const server = await serve();
+    const { ana, bo } = await room(server);
+    const file = arena();
+
+    const refused = nextEvent(ana, 'error');
+    ana.setArena(file.id);
+    expect(await refused).toMatchObject({ code: 'arena_not_shared' });
+
+    await share(server, file);
+    const boHears = nextEvent(bo, 'arena');
+    ana.setArena(file.id);
+    expect(await boHears).toBe(file.id);
+    const [anaSession] = await startMatch(ana, bo);
+    expect(anaSession.arenaId).toBe(file.id);
+  });
+
+  it('keeps built-in arenas as they were', async () => {
+    const server = await serve();
+    const { ana, bo } = await room(server);
+    const boHears = nextEvent(bo, 'arena');
+    ana.setArena('dojo');
+    expect(await boHears).toBe('dojo');
+  });
+
+  it('goes back to the default arena when a picked photo arena is deleted before the match', async () => {
+    const server = await serve();
+    const { ana, bo } = await room(server);
+    const file = arena();
+    await share(server, file);
+    const picked = nextEvent(bo, 'arena');
+    ana.setArena(file.id);
+    await picked;
+    await fetch(`${server.baseUrl}/arenas/${file.id}`, { method: 'DELETE', headers: { 'x-player-id': 'player-aaaa1111' } });
+
+    const errors = Promise.all([nextEvent(ana, 'error'), nextEvent(bo, 'error')]);
+    const fallback = nextEvent(bo, 'room', (info) => info.arenaId === null);
+    ana.ready();
+    bo.ready();
+    for (const error of await errors) expect(error).toMatchObject({ code: 'arena_not_shared', message: expect.stringMatching(/default arena/) });
+    expect((await fallback).players.every((p) => !p.ready)).toBe(true);
+    expect(server.services.relay.matchCount).toBe(0);
   });
 });
 

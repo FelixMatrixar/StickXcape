@@ -1,7 +1,17 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RawData, WebSocket } from 'ws';
-import { cleanText, isRoomCode, NICKNAME_MAX_LENGTH, parseClientMessage, type ClientMessage, type EndReason, type JoinMessage } from '@sticxcape/shared';
+import {
+  cleanText,
+  isPhotoArenaId,
+  isRoomCode,
+  NICKNAME_MAX_LENGTH,
+  parseClientMessage,
+  type ClientMessage,
+  type EndReason,
+  type ErrorCode,
+  type JoinMessage,
+} from '@sticxcape/shared';
 import type { MoveSigner } from '../accounts/signing.ts';
 import type { AccountStore } from '../accounts/store.ts';
 import type { AiGateway } from '../ai/gateway.ts';
@@ -61,6 +71,7 @@ export class Relay {
       closeRoom: (hub) => this.closeRoom(hub),
       verifyMove: (move) => options.signer?.verify(move) ?? false,
       quickMatchEnded: (accounts, winnerSide, reason) => this.rateQuickMatch(accounts, winnerSide, reason),
+      arenaProblem: (arenaId, quick) => this.arenaProblem(arenaId, quick),
     };
     this.timer = setInterval(() => this.tick(), options.config.pingIntervalMs);
     this.timer.unref();
@@ -316,6 +327,18 @@ export class Relay {
       { room: room.code, ratings: [Math.round(a.rating), Math.round(b.rating)], pingMs: Math.round((a.conn.rtt() ?? 0) + (b.conn.rtt() ?? 0)) },
       'quick match paired',
     );
+  }
+
+  /**
+   * Built-in arenas are on every phone. A photo arena must be shared, so every phone in the room
+   * loads the same copy from GET /arenas/{id} (a shared arena never changes), and it stays out of
+   * quick match: it is a photo of somewhere real, for friends only (AR-7).
+   */
+  private arenaProblem(arenaId: string, quick: boolean): { code: ErrorCode; message: string } | null {
+    if (!isPhotoArenaId(arenaId)) return null;
+    if (quick) return { code: 'arena_friends_only', message: 'Photo arenas are for friends; quick match uses the built-in arenas' };
+    if (!this.options.accounts?.sharedArenaOwner(arenaId)) return { code: 'arena_not_shared', message: 'Share that arena first, so the other phones can load it' };
+    return null;
   }
 
   /** Finished matches move both ratings; so does leaving one, which loses it. Desyncs and closed rooms don't count. */
