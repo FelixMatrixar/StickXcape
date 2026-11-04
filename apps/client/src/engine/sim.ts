@@ -6,7 +6,7 @@
  * the clock or the network: the renderer reads `fighters` and `events` after each step.
  */
 import { Button, cleanButtons, hashInts, Rng, type MoveFile, type MoveSlot } from '@sticxcape/shared';
-import { clamp, fixedDiv, fixedLength, fixedMul, idiv, ONE, ratio, toFixed } from './fixed.ts';
+import { clamp, fixedDiv, fixedLength, fixedMul, idiv, lerpFixed, ONE, ratio, toFixed } from './fixed.ts';
 import { compileMove, HIGH, isActiveFrame, LOW, recordedFrame, sampleMove, type CompiledMove } from './moves.ts';
 import { builtinPose, P, stancePose } from './poses.ts';
 import { blendPose, createPose, forwardKinematics, J, JOINT_COUNT, lowestFoot, lowestPoint, POSE_SIZE, ROOT_X, ROOT_Y } from './skeleton.ts';
@@ -29,9 +29,14 @@ export const S = {
   dash: 14,
   ko: 15,
   victory: 16,
+  grab: 17,
+  throw: 18,
+  thrown: 19,
+  guardBreak: 20,
+  roll: 21,
 } as const;
 
-export const PHASE = { intro: 0, fight: 1, ko: 2, timeup: 3, matchEnd: 4, over: 5 } as const;
+export const PHASE = { intro: 0, fight: 1, ko: 2, timeup: 3, matchEnd: 4, over: 5, ringout: 6 } as const;
 
 export const FPS = 60;
 export const MAX_HEALTH = 1000;
@@ -87,6 +92,39 @@ const SIN70 = toFixed(0.9397);
 const KO_SPEED = toFixed(0.24);
 const KO_LIFT = toFixed(0.085);
 
+// Stamina (CB-7): heavies and specials spend it and it refills, so nobody spams the strongest move.
+export const STAMINA_MAX = 1000;
+const STAMINA_REGEN = 4;
+const STAMINA_WAIT = 36;
+export const HEAVY_COST = 220;
+export const SPECIAL_COST = 330;
+// Guard (CB-7): holding Block drains it and blocked hits drain more; empty is a guard break.
+export const GUARD_MAX = 1000;
+const GUARD_HOLD_DRAIN = 2;
+const GUARD_REGEN = 5;
+const GUARD_WAIT = 30;
+const GUARD_BREAK_FRAMES = 40;
+// Grabs (CB-6): L and H together. Strikes beat grabs; grabs beat blocks and parries.
+export const GRAB_ACTION = 64;
+export const GRAB_STARTUP = 8;
+const GRAB_ACTIVE = 3;
+const GRAB_RECOVERY = 30;
+export const GRAB_RANGE = toFixed(0.95);
+/** L then H this many frames apart still makes a grab. */
+const GRAB_COMBINE = 2;
+const THROW_FRAMES = 36;
+const THROW_SLAM = 20;
+export const THROW_DAMAGE = 100;
+// Get-up rolls: hold forward or back while down.
+const ROLL_FRAMES = 22;
+const ROLL_SPEED = toFixed(0.062);
+const ROLL_INVULN = 28;
+// Ring-outs (CB-8): past a drop edge there is no floor.
+const RINGOUT_DEPTH = toFixed(-1.4);
+const RINGOUT_FRAMES = 200;
+const FALL_LIMIT = toFixed(-30);
+const NO_LIMIT = toFixed(100);
+
 export interface MoveStat {
   uses: number;
   hits: number;
@@ -131,7 +169,14 @@ export type SimEvent =
   | { type: 'ko'; side: number; x: number; y: number; vx: number; vy: number }
   | { type: 'tick'; seconds: number }
   | { type: 'timeup' }
-  | { type: 'roundEnd'; winner: number | null; reason: 'ko' | 'time' }
+  | { type: 'grab'; side: number; target: number; x: number; y: number }
+  | { type: 'throw'; side: number; target: number; x: number; y: number; damage: number; ko: boolean }
+  | { type: 'clash'; x: number; y: number }
+  | { type: 'guardBreak'; side: number; x: number; y: number }
+  | { type: 'tired'; side: number }
+  | { type: 'roll'; side: number; dir: number; x: number }
+  | { type: 'ringout'; side: number; x: number }
+  | { type: 'roundEnd'; winner: number | null; reason: 'ko' | 'time' | 'ringout' }
   | { type: 'matchEnd'; winner: number | null };
 
 /** The moves a fighter can use, by input. Indices into `Fighter.moves`; -1 when missing. */
@@ -185,6 +230,13 @@ export class Fighter {
   walkPhase = 0;
   jumpDir = 0;
   hardLanding = 0;
+  stamina = STAMINA_MAX;
+  staminaWait = 0;
+  guard = GUARD_MAX;
+  guardWait = 0;
+  rollDir = 0;
+  /** Off a drop edge with no floor below: falling out of the arena. */
+  falling = 0;
   /** The pose shown this frame, the pose a blend started from, and the blend's progress. */
   readonly pose = createPose();
   readonly from = createPose();
@@ -230,6 +282,8 @@ export interface SimArena {
   width: number;
   /** Start x of the left and right fighter, metres. */
   spawns: [number, number];
+  /** Drop edges allow ring-outs; walls stop fighters. Walls when left out. */
+  edges?: { left: 'wall' | 'drop'; right: 'wall' | 'drop' };
 }
 
 export interface SimOptions {
@@ -271,6 +325,10 @@ export class FightSim {
   readonly arenaWidth: number;
   readonly spawns: [number, number];
   readonly rng: Rng;
+  readonly dropLeft: boolean;
+  readonly dropRight: boolean;
+  /** The side that fell out of the arena this round, or -1. */
+  ringoutSide = -1;
   /** Events from the last step, for the renderer, sound and stats. */
   readonly events: SimEvent[] = [];
   frame = 0;
@@ -291,6 +349,8 @@ export class FightSim {
     this.rng = new Rng(options.seed);
     this.arenaWidth = toFixed(options.arena.width);
     this.spawns = [toFixed(options.arena.spawns[0]), toFixed(options.arena.spawns[1])];
+    this.dropLeft = options.arena.edges?.left === 'drop';
+    this.dropRight = options.arena.edges?.right === 'drop';
     this.fighters = [new Fighter(0, options.loadouts[0]), new Fighter(1, options.loadouts[1])];
     this.resetRound();
   }
@@ -331,12 +391,13 @@ export class FightSim {
     const holdB = this.held(b);
     if (!holdA) this.think(a, b, live);
     if (!holdB) this.think(b, a, live);
-    if (!holdA) this.physics(a);
-    if (!holdB) this.physics(b);
+    if (!holdA) this.physics(a, b);
+    if (!holdB) this.physics(b, a);
     this.separate();
     if (!holdA) this.animate(a);
     if (!holdB) this.animate(b);
     if (live) this.detectHits();
+    if (live) this.detectGrabs();
     if (!holdA) this.post(a, live);
     if (!holdB) this.post(b, live);
     this.advancePhase();
@@ -344,16 +405,18 @@ export class FightSim {
   }
 
   private held(f: Fighter): boolean {
+    if (this.phase === PHASE.ringout) return this.phaseT < KO_HOLD_FRAMES && f.side !== this.ringoutSide;
     return this.phase === PHASE.ko && this.phaseT < KO_HOLD_FRAMES && f.state !== S.ko;
   }
 
   /** Unsigned 32-bit hash of everything that decides the fight, sent to the relay every 60 frames. */
   hash(): number {
-    const values: number[] = [this.frame, this.phase, this.phaseT, this.timer, this.hitstop, this.round, this.rng.state | 0];
+    const values: number[] = [this.frame, this.phase, this.phaseT, this.timer, this.hitstop, this.round, this.rng.state | 0, this.ringoutSide];
     for (const f of this.fighters) {
       values.push(
         f.x, f.y, f.vx, f.vy, f.facing, f.state, f.stateT, f.stun, f.move, f.moveT, f.moveHit, f.moveRootX, f.armor, f.cancel,
         f.health, f.parryT, f.combo, f.invuln, f.buffer, f.bufferT, f.crouch, f.walk, f.walkPhase, f.roundsWon, f.blendT, f.blendLen,
+        f.stamina, f.staminaWait, f.guard, f.guardWait, f.rollDir, f.falling,
       );
       for (let i = 0; i < POSE_SIZE; i++) values.push(f.pose[i]);
     }
@@ -367,6 +430,7 @@ export class FightSim {
     this.phaseT = 0;
     this.timer = ROUND_FRAMES;
     this.hitstop = 0;
+    this.ringoutSide = -1;
     for (const f of this.fighters) {
       f.x = this.spawns[f.side];
       f.y = 0;
@@ -391,6 +455,12 @@ export class FightSim {
       f.walk = 0;
       f.tipValid = 0;
       f.hardLanding = 0;
+      f.stamina = STAMINA_MAX;
+      f.staminaWait = 0;
+      f.guard = GUARD_MAX;
+      f.guardWait = 0;
+      f.rollDir = 0;
+      f.falling = 0;
       stancePose(f.pose, 0);
       f.from.set(f.pose);
       f.blendT = 0;
@@ -427,8 +497,11 @@ export class FightSim {
       }
       case PHASE.ko:
       case PHASE.timeup:
-        if (this.phaseT >= (this.phase === PHASE.ko ? KO_FRAMES : TIMEUP_FRAMES)) this.endRound(this.phase === PHASE.ko ? 'ko' : 'time');
+      case PHASE.ringout: {
+        const limit = this.phase === PHASE.ko ? KO_FRAMES : this.phase === PHASE.ringout ? RINGOUT_FRAMES : TIMEUP_FRAMES;
+        if (this.phaseT >= limit) this.endRound(this.phase === PHASE.ko ? 'ko' : this.phase === PHASE.ringout ? 'ringout' : 'time');
         return;
+      }
       case PHASE.matchEnd:
         if (this.phaseT >= MATCH_END_FRAMES) {
           this.phase = PHASE.over;
@@ -438,10 +511,12 @@ export class FightSim {
     }
   }
 
-  private endRound(reason: 'ko' | 'time'): void {
+  private endRound(reason: 'ko' | 'time' | 'ringout'): void {
     const [a, b] = this.fighters;
     let winner: number | null = null;
-    if (reason === 'ko') {
+    if (reason === 'ringout') {
+      winner = this.ringoutSide >= 0 ? 1 - this.ringoutSide : null;
+    } else if (reason === 'ko') {
       if (a.health === 0 && b.health > 0) winner = 1;
       else if (b.health === 0 && a.health > 0) winner = 0;
     } else if (a.health !== b.health) {
@@ -486,6 +561,7 @@ export class FightSim {
     if (pressed & Button.Light) action = f.slots.light[horizontal ? 1 : 0];
     if (pressed & Button.Heavy) action = down && f.slots.low >= 0 ? f.slots.low : f.slots.heavy[horizontal ? 1 : 0];
     if (pressed & Button.Special) action = f.slots.special;
+    if (pressed & (Button.Light | Button.Heavy) && f.buttons & Button.Light && f.buttons & Button.Heavy) action = GRAB_ACTION;
     if (action >= 0) {
       f.buffer = action;
       f.bufferT = INPUT_BUFFER;
@@ -520,9 +596,36 @@ export class FightSim {
     f.blendLen = blend;
   }
 
+  /** Starts whatever is buffered: a grab or a move. */
+  private startAction(f: Fighter): void {
+    if (f.buffer === GRAB_ACTION) this.startGrab(f);
+    else this.startMove(f, f.buffer);
+  }
+
+  private startGrab(f: Fighter): void {
+    this.setState(f, S.grab, 0, 3);
+    f.crouch = 0;
+    f.walk = 0;
+    f.vx = 0;
+    f.buffer = -1;
+    f.bufferT = 0;
+  }
+
   private startMove(f: Fighter, index: number): void {
     const move = f.moves[index];
     if (!move) return;
+    const cost = move.slot === 'heavy' ? HEAVY_COST : move.slot === 'special' ? SPECIAL_COST : 0;
+    if (cost > f.stamina) {
+      // Out of breath: the move doesn't come out.
+      f.buffer = -1;
+      f.bufferT = 0;
+      this.events.push({ type: 'tired', side: f.side });
+      return;
+    }
+    if (cost > 0) {
+      f.stamina -= cost;
+      f.staminaWait = STAMINA_WAIT;
+    }
     f.state = S.attack;
     f.stateT = 0;
     f.stun = 0;
@@ -570,7 +673,7 @@ export class FightSim {
           f.walk = 0;
           return;
         }
-        if (f.buffer >= 0) return this.startMove(f, f.buffer);
+        if (f.buffer >= 0) return this.startAction(f);
         if (B & Button.Block) {
           f.walk = 0;
           f.crouch = B & Button.Down ? 1 : 0;
@@ -619,11 +722,18 @@ export class FightSim {
       case S.dash:
       case S.getup:
         if (f.stun === 0) this.setState(f, S.idle, 0, 3);
-        else if (f.state === S.land && live && f.buffer >= 0 && f.stateT >= 2) this.startMove(f, f.buffer);
+        else if (f.state === S.land && live && f.buffer >= 0 && f.stateT >= 2) this.startAction(f);
         return;
       case S.attack: {
         const move = f.moves[f.move];
-        if (f.cancel && f.buffer >= 0 && live) {
+        // L then H a frame apart still makes a grab, not a jab.
+        if (live && f.buffer === GRAB_ACTION && f.moveT <= GRAB_COMBINE && !f.moveHit && (move.slot === 'light' || move.slot === 'heavy')) {
+          f.stats[move.index].uses -= 1;
+          if (move.slot === 'heavy') f.stamina = Math.min(STAMINA_MAX, f.stamina + HEAVY_COST);
+          this.startGrab(f);
+          return;
+        }
+        if (f.cancel && f.buffer >= 0 && f.buffer !== GRAB_ACTION && live) {
           const next = f.moves[f.buffer];
           if (next && next.index !== move.index && (next.slot === 'heavy' || next.slot === 'special' || next.slot === 'low')) {
             this.startMove(f, f.buffer);
@@ -647,10 +757,29 @@ export class FightSim {
         return;
       case S.knockdown:
         if (f.stun === 0) {
-          this.setState(f, S.getup, GETUP_FRAMES, 0);
-          f.invuln = GETUP_INVULN;
           f.facing = other.x >= f.x ? 1 : -1;
+          // Hold forward or back to roll out, so nobody gets trapped on the floor.
+          const fwdNow = f.facing > 0 ? Button.Right : Button.Left;
+          const backNow = f.facing > 0 ? Button.Left : Button.Right;
+          const dir = live ? (B & fwdNow ? 1 : B & backNow ? -1 : 0) : 0;
+          if (dir !== 0) {
+            this.setState(f, S.roll, ROLL_FRAMES, 3);
+            f.rollDir = dir;
+            f.invuln = ROLL_INVULN;
+            this.events.push({ type: 'roll', side: f.side, dir, x: f.x });
+          } else {
+            this.setState(f, S.getup, GETUP_FRAMES, 0);
+            f.invuln = GETUP_INVULN;
+          }
         }
+        return;
+      case S.guardBreak:
+      case S.roll:
+        if (f.stun === 0) this.setState(f, S.idle, 0, 5);
+        return;
+      case S.thrown:
+        // If the throw is interrupted (the round ended), drop.
+        if (other.state !== S.throw) this.setState(f, S.launched, 0, 3);
         return;
       case S.victory: {
         const move = f.moves[f.move];
@@ -660,7 +789,7 @@ export class FightSim {
     }
   }
 
-  private physics(f: Fighter): void {
+  private physics(f: Fighter, other: Fighter): void {
     switch (f.state) {
       case S.idle:
         if (f.walk !== 0) {
@@ -673,12 +802,16 @@ export class FightSim {
       case S.air:
       case S.launched:
       case S.ko:
-        if (f.y > 0 || f.vy > 0) {
+        if (f.y > 0 || f.vy > 0 || f.falling) {
           f.vy -= GRAVITY;
           f.x += f.vx;
-          f.y += f.vy;
+          f.y = Math.max(FALL_LIMIT, f.y + f.vy);
           f.vx = fixedMul(f.vx, AIR_DRAG);
-          if (f.y <= 0) this.landed(f);
+          if (f.y <= 0) {
+            if (this.offEdge(f)) f.falling = 1;
+            else if (!f.falling) this.landed(f);
+          }
+          if (f.falling && f.y < RINGOUT_DEPTH) this.ringout(f);
         } else {
           f.x += f.vx;
           f.vx = fixedMul(f.vx, FRICTION);
@@ -698,12 +831,65 @@ export class FightSim {
         f.x += f.vx;
         f.vx = fixedMul(f.vx, DASH_DECAY);
         break;
+      case S.roll:
+        f.x += f.facing * f.rollDir * ROLL_SPEED;
+        break;
+      case S.thrown:
+        this.carry(f, other);
+        break;
       default:
         f.x += f.vx;
         f.vx = fixedMul(f.vx, FRICTION);
     }
     if (f.vx !== 0 && Math.abs(f.vx) < 64) f.vx = 0;
-    f.x = clamp(f.x, WALL, this.arenaWidth - WALL);
+    const [lo, hi] = this.limits(f);
+    f.x = clamp(f.x, lo, hi);
+    // Slid off a drop edge: no floor, so down they go.
+    if (!f.falling && f.y <= 0 && this.offEdge(f)) {
+      f.falling = 1;
+      if (f.state !== S.ko) this.setState(f, S.launched, 0, 3);
+      f.y = -1;
+    }
+  }
+
+  /** Fighters moving on purpose stop at the edge; only being hit or thrown can carry someone off a drop. */
+  private limits(f: Fighter): [number, number] {
+    const pushed = PUSHED.has(f.state) || f.falling === 1;
+    const lo = this.dropLeft && pushed ? -NO_LIMIT : WALL;
+    const hi = this.dropRight && pushed ? this.arenaWidth + NO_LIMIT : this.arenaWidth - WALL;
+    return [lo, hi];
+  }
+
+  private offEdge(f: Fighter): boolean {
+    return (this.dropLeft && f.x < 0) || (this.dropRight && f.x > this.arenaWidth);
+  }
+
+  private ringout(f: Fighter): void {
+    if (this.phase !== PHASE.fight || this.ringoutSide >= 0) return;
+    this.ringoutSide = f.side;
+    this.phase = PHASE.ringout;
+    this.phaseT = 0;
+    this.events.push({ type: 'ringout', side: f.side, x: f.x });
+  }
+
+  /** The thrown fighter rides the throw: lifted, swung over, then slammed down in front. */
+  private carry(t: Fighter, a: Fighter): void {
+    const k = a.stateT;
+    let dist: number;
+    let height: number;
+    if (k < 10) {
+      const u = ratio(k, 10);
+      dist = lerpFixed(toFixed(0.62), toFixed(0.38), u);
+      height = fixedMul(toFixed(0.75), u);
+    } else {
+      const u = ratio(Math.min(k - 10, THROW_SLAM - 10), THROW_SLAM - 10);
+      dist = lerpFixed(toFixed(0.38), toFixed(0.95), u);
+      height = fixedMul(toFixed(0.75), ONE - fixedMul(u, u));
+    }
+    t.x = a.x + a.facing * dist;
+    t.y = Math.max(0, height);
+    t.vx = 0;
+    t.vy = 0;
   }
 
   private landed(f: Fighter): void {
@@ -731,6 +917,7 @@ export class FightSim {
     const [a, b] = this.fighters;
     if (Math.abs(a.y - b.y) > PUSH_HEIGHT) return;
     if (a.state === S.ko || b.state === S.ko) return;
+    if (a.falling || b.falling || NO_PUSH.has(a.state) || NO_PUSH.has(b.state)) return;
     const gap = b.x - a.x;
     const overlap = 2 * BODY_HALF - Math.abs(gap);
     if (overlap <= 0) return;
@@ -820,8 +1007,25 @@ export class FightSim {
       case S.dash:
         builtinPose(out, f.jumpDir > 0 ? P.dash : P.backdash, t);
         break;
+      case S.grab:
+        builtinPose(out, P.grab, t, GRAB_STARTUP, GRAB_STARTUP + GRAB_ACTIVE);
+        break;
+      case S.throw:
+        builtinPose(out, P.throw, t, THROW_SLAM, THROW_FRAMES);
+        break;
+      case S.thrown:
+        builtinPose(out, P.thrown, t);
+        lying = true;
+        break;
+      case S.guardBreak:
+        builtinPose(out, P.guardBreak, t);
+        break;
+      case S.roll:
+        builtinPose(out, P.roll, t, ROLL_FRAMES, f.rollDir);
+        lying = true;
+        break;
       case S.ko:
-        if (f.y > 0) builtinPose(out, P.launched, t);
+        if (f.y > 0 || f.falling) builtinPose(out, P.launched, t);
         else {
           builtinPose(out, P.koDown, t);
           lying = true;
@@ -839,8 +1043,10 @@ export class FightSim {
     }
 
     // Never let the body sink into the floor.
-    const low = lying ? lowestPoint(f.pose) : lowestFoot(f.pose);
-    if (f.y + f.pose[ROOT_Y] + low < 0) f.pose[ROOT_Y] = -low - f.y;
+    if (!f.falling) {
+      const low = lying ? lowestPoint(f.pose) : lowestFoot(f.pose);
+      if (f.y + f.pose[ROOT_Y] + low < 0) f.pose[ROOT_Y] = -low - f.y;
+    }
     this.place(f);
   }
 
@@ -876,7 +1082,7 @@ export class FightSim {
   }
 
   private testHit(a: Fighter, t: Fighter, move: CompiledMove, tipX: number, tipY: number): PendingHit | null {
-    if (t.invuln > 0 || t.state === S.ko || t.state === S.knockdown || t.state === S.getup) return null;
+    if (t.invuln > 0 || t.falling || t.state === S.ko || t.state === S.knockdown || t.state === S.getup || t.state === S.thrown || t.state === S.roll) return null;
     const tMove = t.currentMove;
     if (tMove && tMove.evasive && isActiveFrame(tMove, t.moveT)) return null;
     // Height rules: highs sail over a crouch, lows pass under anyone off the ground.
@@ -946,6 +1152,7 @@ export class FightSim {
       this.setState(t, S.idle, 0, 3);
       t.parryT = 0;
       t.crouch = 0;
+      t.guard = GUARD_MAX;
       stat.parries += 1;
       this.hitstop = 12;
       this.events.push({ type: 'parry', side: t.side, target: a.side, x: hit.px, y: hit.py, heavy });
@@ -966,7 +1173,13 @@ export class FightSim {
       stat.blocks += 1;
       this.hitstop = rules.strength === 2 ? 6 : 3;
       this.events.push({ type: 'block', side: a.side, target: t.side, x: hit.px, y: hit.py, strength: rules.strength, chip });
-      if (t.health === 0) this.knockOut(a, t, hit, a.facing * toFixed(0.9), toFixed(0.4));
+      if (t.health === 0) {
+        this.knockOut(a, t, hit, a.facing * toFixed(0.9), toFixed(0.4));
+        return;
+      }
+      t.guard -= idiv(rules.damage * 5, 2) + 40;
+      t.guardWait = GUARD_WAIT;
+      if (t.guard <= 0) this.guardBreak(t);
       return;
     }
 
@@ -1078,6 +1291,109 @@ export class FightSim {
     this.events.push({ type: 'ko', side: t.side, x: hit.px, y: hit.py, vx: t.vx, vy: t.vy });
   }
 
+  private detectGrabs(): void {
+    const [a, b] = this.fighters;
+    const ca = this.canCatch(a, b);
+    const cb = this.canCatch(b, a);
+    if (ca && cb) {
+      // Both grabbed at once: they break apart.
+      for (const f of this.fighters) {
+        this.setState(f, S.stagger, 12, 2);
+        f.vx = -f.facing * toFixed(0.06);
+      }
+      this.hitstop = 6;
+      this.events.push({ type: 'clash', x: (a.x + b.x) >> 1, y: toFixed(1.2) });
+      return;
+    }
+    if (ca) this.catch(a, b);
+    else if (cb) this.catch(b, a);
+  }
+
+  /** Strikes beat grabs (nobody is caught mid-swing); grabs beat blocks and parries. */
+  private canCatch(f: Fighter, t: Fighter): boolean {
+    if (f.state !== S.grab || f.stateT < GRAB_STARTUP || f.stateT >= GRAB_STARTUP + GRAB_ACTIVE) return false;
+    if (Math.abs(t.x - f.x) > GRAB_RANGE || t.y > 0 || f.y > 0 || t.invuln > 0 || t.falling) return false;
+    switch (t.state) {
+      case S.idle:
+      case S.block:
+      case S.parry:
+      case S.parryWhiff:
+      case S.land:
+      case S.dash:
+      case S.stagger:
+      case S.guardBreak:
+      case S.grab:
+      case S.jumpsquat:
+        return true;
+      case S.attack: {
+        const m = t.currentMove;
+        return m !== null && t.moveT >= m.startup + m.active;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private catch(f: Fighter, t: Fighter): void {
+    this.setState(f, S.throw, 0, 2);
+    this.setState(t, S.thrown, 0, 2);
+    t.facing = f.facing > 0 ? -1 : 1;
+    t.crouch = 0;
+    t.parryT = 0;
+    t.combo = 0;
+    f.vx = 0;
+    t.vx = 0;
+    this.hitstop = 4;
+    this.events.push({ type: 'grab', side: f.side, target: t.side, x: (f.x + t.x) >> 1, y: toFixed(1.1) });
+  }
+
+  private slam(a: Fighter, t: Fighter): void {
+    t.health = Math.max(0, t.health - THROW_DAMAGE);
+    t.damageTaken += THROW_DAMAGE;
+    a.damageDealt += THROW_DAMAGE;
+    t.y = 0;
+    const ko = t.health === 0;
+    this.events.push({ type: 'throw', side: a.side, target: t.side, x: t.x, y: toFixed(0.15), damage: THROW_DAMAGE, ko });
+    if (ko) {
+      this.setState(t, S.ko, 0, 1);
+      t.vx = a.facing * toFixed(0.11);
+      t.vy = toFixed(0.06);
+      t.y = 1;
+      this.hitstop = 20;
+      this.events.push({ type: 'ko', side: t.side, x: t.x, y: toFixed(0.3), vx: t.vx, vy: t.vy });
+      return;
+    }
+    this.hitstop = 9;
+    this.setState(t, S.knockdown, KNOCKDOWN_FRAMES, 2);
+    t.vx = a.facing * toFixed(0.05);
+    this.events.push({ type: 'knockdown', side: t.side, x: t.x });
+  }
+
+  private meters(f: Fighter): void {
+    if (f.staminaWait > 0) f.staminaWait -= 1;
+    else if (f.stamina < STAMINA_MAX) f.stamina = Math.min(STAMINA_MAX, f.stamina + STAMINA_REGEN);
+    if (f.state === S.block) {
+      f.guard -= GUARD_HOLD_DRAIN;
+      f.guardWait = GUARD_WAIT;
+      if (f.guard <= 0) this.guardBreak(f);
+    } else if (f.state === S.blockstun) {
+      f.guardWait = GUARD_WAIT;
+    } else if (f.guardWait > 0) {
+      f.guardWait -= 1;
+    } else if (f.guard < GUARD_MAX) {
+      f.guard = Math.min(GUARD_MAX, f.guard + GUARD_REGEN);
+    }
+  }
+
+  private guardBreak(f: Fighter): void {
+    f.guard = 0;
+    f.guardWait = GUARD_BREAK_FRAMES + GUARD_WAIT;
+    this.setState(f, S.guardBreak, GUARD_BREAK_FRAMES, 2);
+    f.crouch = 0;
+    this.hitstop = Math.max(this.hitstop, 10);
+    this.events.push({ type: 'guardBreak', side: f.side, x: f.world[2 * J.neck], y: f.world[2 * J.neck + 1] });
+  }
+
   private nearWall(f: Fighter): boolean {
     return f.x <= WALL + toFixed(0.25) || f.x >= this.arenaWidth - WALL - toFixed(0.25);
   }
@@ -1090,7 +1406,22 @@ export class FightSim {
       f.bufferT -= 1;
       if (f.bufferT === 0) f.buffer = -1;
     }
+    this.meters(f);
     switch (f.state) {
+      case S.grab: {
+        if (f.stateT === GRAB_STARTUP + GRAB_ACTIVE) {
+          const other = this.fighters[1 - f.side];
+          this.events.push({ type: 'whiff', side: f.side, move: -1, near: Math.abs(other.x - f.x) < GRAB_RANGE + toFixed(0.8) });
+        }
+        if (f.stateT >= GRAB_STARTUP + GRAB_ACTIVE + GRAB_RECOVERY) this.setState(f, S.idle, 0, 4);
+        break;
+      }
+      case S.throw: {
+        const other = this.fighters[1 - f.side];
+        if (f.stateT === THROW_SLAM && other.state === S.thrown) this.slam(f, other);
+        if (f.stateT >= THROW_FRAMES) this.setState(f, S.idle, 0, 4);
+        break;
+      }
       case S.attack: {
         const move = f.moves[f.move];
         if (move.hasHitbox && !f.moveHit && f.moveT === move.startup + move.active - 1) {
@@ -1120,6 +1451,11 @@ export class FightSim {
     }
   }
 }
+
+/** States a hit or a throw has put someone in: only these can be carried off a drop edge. */
+const PUSHED = new Set<number>([S.hitstun, S.launched, S.blockstun, S.stagger, S.knockdown, S.ko, S.thrown, S.guardBreak]);
+/** States that pass through the other fighter instead of pushing. */
+const NO_PUSH = new Set<number>([S.roll, S.thrown, S.throw]);
 
 /** Distance from point p to segment ab; out receives the closest point and t (0..ONE). */
 function closest(px: number, py: number, ax: number, ay: number, bx: number, by: number, out: Int32Array): number {
