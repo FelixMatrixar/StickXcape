@@ -12,6 +12,7 @@ import { settings, updateSettings } from '../app/settings.ts';
 import { music } from '../audio/music.ts';
 import { ui } from '../audio/sfx.ts';
 import { DEMO_ASPECT, demoTake } from '../capture/demo.ts';
+import { bodyBox, HAZARDS, SpaceWatch } from '../capture/space.ts';
 import { CameraError, loadTracker, openCamera, Tracking, type CameraFacing, type PoseFrame } from '../capture/tracker.ts';
 import { J, JOINT_COUNT } from '../engine/skeleton.ts';
 import { analyse, cleanCapture, CleanupError, encodeMove, floatJoints, jitterTip, prepareFrames, prepareIdle, type CleanCapture } from '../moves/cleanup.ts';
@@ -63,6 +64,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   let halfSpeed = false;
   let stream: MediaStream | null = null;
   let tracking: Tracking | null = null;
+  /** The clear-space check, while the camera is open. */
+  let space: SpaceWatch | null = null;
   let facing: CameraFacing = 'user';
   let video: HTMLVideoElement | null = null;
   let overlay: HTMLCanvasElement | null = null;
@@ -193,6 +196,9 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
       if (disposed) return stopCamera();
       tracking = new Tracking(landmarker, video, (frame) => onTracked(frame));
       tracking.start();
+      // Safety: nothing to kick within reach. Paused while recording so tracking stays smooth.
+      space = new SpaceWatch(video, () => (lastFrame ? bodyBox(lastFrame.points) : null), () => recording !== null);
+      space.start();
       renderSetup(null);
     } catch (err) {
       stopCamera();
@@ -206,6 +212,8 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
   function stopCamera(): void {
     tracking?.stop();
     tracking = null;
+    space?.stop();
+    space = null;
     for (const track of stream?.getTracks() ?? []) track.stop();
     stream = null;
   }
@@ -348,6 +356,28 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     const torso = Math.hypot(joints[2 * J.neck] - joints[2 * J.pelvis], joints[2 * J.neck + 1] - joints[2 * J.pelvis + 1]);
     const facingDir = joints[2 * J.lToe] > joints[2 * J.lAnkle] ? 1 : -1;
     drawFigure(ctx, joints, { ink, scale: torso / 0.5, facing: facingDir, alpha: recording ? 0.95 : 0.8, weight: 0.8 });
+    // Anything within reach gets a red outline and a name.
+    if (!recording) {
+      for (const hazard of space?.hazards ?? []) {
+        let x0 = ox + hazard.x0 * vw * scale;
+        let x1 = ox + hazard.x1 * vw * scale;
+        if (mirrored) [x0, x1] = [w - x1, w - x0];
+        const y0 = oy + hazard.y0 * vh * scale;
+        const y1 = oy + hazard.y1 * vh * scale;
+        ctx.strokeStyle = 'rgba(255, 92, 70, 0.95)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 6]);
+        ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+        ctx.setLineDash([]);
+        const label = HAZARDS[hazard.label].replace(/^An? /, '');
+        ctx.font = '800 13px system-ui, sans-serif';
+        const tw = ctx.measureText(label).width + 14;
+        ctx.fillStyle = 'rgba(255, 92, 70, 0.95)';
+        ctx.fillRect(x0, Math.max(0, y0 - 22), tw, 22);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, x0 + 7, Math.max(0, y0 - 22) + 15);
+      }
+    }
   }
 
   function assess(frame: PoseFrame | null): { ok: boolean; text: string; optional?: boolean }[] {
@@ -363,9 +393,19 @@ export function studioScreen(onDone: () => void, startKey?: LoadoutKey): Screen 
     return [
       { ok: whole, text: whole ? 'Whole body in frame' : 'Step back: head and feet in frame' },
       { ok: frame.people <= 1, text: frame.people <= 1 ? 'Just you in frame' : 'Only one person, please' },
+      spaceCheck(),
       { ok: sideOn, text: sideOn ? 'Standing side-on' : 'Turn side-on to the phone', optional: true },
       { ok: avgVis > 0.7, text: avgVis > 0.7 ? 'Good light' : 'A bit dark: add some light', optional: true },
     ];
+  }
+
+  /** The clear-space check as a status line: it blocks recording until nothing is within reach. */
+  function spaceCheck(): { ok: boolean; text: string; optional?: boolean } {
+    if (!space) return { ok: true, text: 'Clear space around you', optional: true };
+    if (space.state === 'loading') return { ok: false, text: 'Checking the space around you…' };
+    if (space.state === 'failed') return { ok: false, optional: true, text: 'Couldn’t check the space: clear an arm’s length yourself' };
+    const hazard = space.hazards[0];
+    return hazard ? { ok: false, text: `${HAZARDS[hazard.label]} is within reach: move it or step away` } : { ok: true, text: 'Clear space around you' };
   }
 
   async function countdown(): Promise<void> {

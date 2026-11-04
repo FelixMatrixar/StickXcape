@@ -27,9 +27,11 @@ interface PoseLandmarker {
   close(): void;
 }
 
-interface VisionModule {
+/** The parts of MediaPipe Tasks Vision the game uses. */
+export interface VisionModule {
   FilesetResolver: { forVisionTasks(base: string): Promise<unknown> };
   PoseLandmarker: { createFromOptions(fileset: unknown, options: unknown): Promise<PoseLandmarker> };
+  ObjectDetector: { createFromOptions(fileset: unknown, options: unknown): Promise<unknown> };
 }
 
 const VERSION = '0.10.21';
@@ -38,13 +40,25 @@ const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/p
 
 export const LANDMARKS = 33;
 
+let visionPromise: Promise<{ vision: VisionModule; fileset: unknown }> | null = null;
+
+/** MediaPipe's runtime, loaded once from the CDN and shared by the tracker and the space check. */
+export function loadVision(): Promise<{ vision: VisionModule; fileset: unknown }> {
+  visionPromise ??= (async () => {
+    const vision = (await import(/* @vite-ignore */ `${CDN}/vision_bundle.mjs`)) as VisionModule;
+    const fileset = await vision.FilesetResolver.forVisionTasks(`${CDN}/wasm`);
+    return { vision, fileset };
+  })();
+  visionPromise.catch(() => (visionPromise = null));
+  return visionPromise;
+}
+
 let landmarkerPromise: Promise<PoseLandmarker> | null = null;
 
 /** Loads the tracker once; GPU when the phone allows, otherwise CPU. */
 export function loadTracker(): Promise<PoseLandmarker> {
   landmarkerPromise ??= (async () => {
-    const vision = (await import(/* @vite-ignore */ `${CDN}/vision_bundle.mjs`)) as VisionModule;
-    const fileset = await vision.FilesetResolver.forVisionTasks(`${CDN}/wasm`);
+    const { vision, fileset } = await loadVision();
     const options = (delegate: 'GPU' | 'CPU') => ({
       baseOptions: { modelAssetPath: MODEL, delegate },
       runningMode: 'VIDEO',
