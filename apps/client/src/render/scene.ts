@@ -69,6 +69,8 @@ const TRAIL_POINTS = 12;
 const TRAIL_SECONDS = 0.13;
 const WHOOSH_SPEED = 5.2;
 const SMEAR_SPEED = 7;
+/** Seconds to blend from an active ragdoll back to the fighter's pose. */
+const RELEASE = 0.16;
 
 interface Trail {
   x: Float32Array;
@@ -104,6 +106,10 @@ class View {
   jitter = 0;
   readonly footY = new Float32Array([0, 0]);
   ragdoll: Ragdoll | null = null;
+  /** Seconds left blending out of an active ragdoll, or 0. */
+  release = 0;
+  /** Where the simulation has the joints this frame, metres: what an active ragdoll reaches for. */
+  readonly target = new Float32Array(JOINT_COUNT * 2);
   ready = false;
   /** How much of the recorded idle stance shows, 0..1. */
   idleW = 0;
@@ -290,7 +296,10 @@ export class FightScene {
       case 'round':
         ps.clearDecals();
         this.popups.clear();
-        for (const view of this.views) view.ragdoll = null;
+        for (const view of this.views) {
+          view.ragdoll = null;
+          view.release = 0;
+        }
         this.camera.edgeMargin = this.sim.dropLeft || this.sim.dropRight ? 1.7 : 0.6;
         this.syncViews(true);
         this.timeScale = 1;
@@ -340,6 +349,12 @@ export class FightScene {
           const t = this.sim.fighters[event.target];
           const tx = fromFixed(t.x);
           dust(ps, tx, 6, 0.5, 1.2, this.groundAt(tx, fromFixed(t.y)));
+        }
+        // CB-8: a launch hands the body to an active ragdoll that flails along the blow.
+        if (!event.ko && (event.launch || this.views[event.target].ragdoll?.active)) {
+          const ragdoll = this.activeRagdoll(event.target as 0 | 1);
+          const kick = 2.5 + s * 2.2;
+          ragdoll.kick(event.hurtJoint, dx * kick, dy * kick + 0.8);
         }
         this.camera.addTrauma(0.14 + s * 0.13 + (event.counter ? 0.1 : 0));
         this.sound?.hit(s, event.counter, pan);
@@ -448,6 +463,14 @@ export class FightScene {
         const attacker = this.inks[event.side];
         const floor = fromFixed(event.y) - 0.15;
         dust(ps, x, 16, 1.4, 2, floor);
+        if (!event.ko) {
+          const ragdoll = this.activeRagdoll(event.target as 0 | 1);
+          const facing = this.sim.fighters[event.side].facing;
+          ragdoll.shove(facing * 0.8, -3.2);
+          ragdoll.kick(J.head, facing * 1.5, -1.5);
+          ragdoll.kick(J.lAnkle, facing * 1.2, 2.2);
+          ragdoll.kick(J.rAnkle, facing * 1.6, 2.6);
+        }
         ps.spawn(K.ring, x, floor + 0.03, { size: 0.15, size2: 1.1, life: 0.42, color: 'rgba(255,240,220,0.8)' });
         ps.spawn(K.burst, x, floor + 0.25, { size: 0.06, size2: 0.5, life: 0.3, color: '#ffffff', rot: Math.random() * 3 });
         inkSpray(ps, x, 0.3, 0, 1, 18, 6, attacker.ink, 0.026);
@@ -563,24 +586,47 @@ export class FightScene {
     this.haptic?.('ko');
   }
 
-  /** Hands a fighter over to the cosmetic ragdoll, so slow motion applies to the fall. */
-  private goLimp(side: 0 | 1, vx: number, vy: number): void {
-    const ps = this.particles;
-    const f = this.sim.fighters[side];
+  /** The fighter's active ragdoll (CB-8), made from where the body is drawn now if it has none. */
+  private activeRagdoll(side: 0 | 1): Ragdoll {
     const view = this.views[side];
-    for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = fromFixed(f.world[i]);
-    const ragdoll = new Ragdoll(view.world, vx, vy, -f.facing * 6.5 * (0.7 + Math.random() * 0.6));
+    view.release = 0;
+    if (view.ragdoll?.active) return view.ragdoll;
+    const f = this.sim.fighters[side];
+    const ragdoll = this.makeRagdoll(view.world, fromFixed(f.vx) * 60, fromFixed(f.vy) * 60, 0, 0.6);
+    ragdoll.active = true;
+    ragdoll.target.set(view.world);
+    view.target.set(view.world);
+    ragdoll.tvx = fromFixed(f.vx) * 60;
+    ragdoll.tvy = fromFixed(f.vy) * 60;
+    view.ragdoll = ragdoll;
+    return ragdoll;
+  }
+
+  /** A ragdoll that knows the arena and kicks up dust where it hits, scaled by loud. */
+  private makeRagdoll(joints: Float32Array, vx: number, vy: number, spin: number, loud: number): Ragdoll {
+    const ps = this.particles;
+    const ragdoll = new Ragdoll(joints, vx, vy, spin);
     ragdoll.arenaWidth = fromFixed(this.sim.arenaWidth);
     ragdoll.dropLeft = this.sim.dropLeft;
     ragdoll.dropRight = this.sim.dropRight;
     ragdoll.ledges = this.ledges;
     ragdoll.onImpact = (speed, px, py) => {
-      const strength = Math.min(1, speed / 8);
+      const strength = Math.min(1, speed / 8) * loud;
       dust(ps, px, 3 + Math.round(strength * 8), 0.6, 0.6 + strength * 1.4, py);
       if (strength > 0.25) this.camera.addTrauma(strength * 0.25);
       this.sound?.body(strength, this.pan(px));
     };
-    view.ragdoll = ragdoll;
+    return ragdoll;
+  }
+
+  /** Hands a fighter over to the cosmetic ragdoll, so slow motion applies to the fall. */
+  private goLimp(side: 0 | 1, vx: number, vy: number): void {
+    const f = this.sim.fighters[side];
+    const view = this.views[side];
+    // Already a ragdoll (a knockdown in progress): go limp from where it is.
+    if (!view.ragdoll) for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = fromFixed(f.world[i]);
+    view.ragdoll = this.makeRagdoll(view.world, vx, vy, -f.facing * 6.5 * (0.7 + Math.random() * 0.6), 1);
+    view.release = 0;
   }
 
   // Frames.
@@ -621,7 +667,11 @@ export class FightScene {
     this.draw();
   }
 
+  /** The game-time seconds the last update covered (slow motion included). */
+  private stepDt = 0;
+
   private update(dt: number, real: number): void {
+    this.stepDt = dt;
     this.camera.shakeScale = this.shake;
     this.camera.update(this.freeze > 0 ? real * 0.15 : dt + (real - dt) * 0.35, this.targets());
     this.particles.update(dt);
@@ -630,6 +680,7 @@ export class FightScene {
     this.flashAlpha = Math.max(0, this.flashAlpha - real * 4.5);
     this.koDim = Math.max(0, this.koDim - real * 0.5);
     for (const view of this.views) {
+      this.muscles(view, real);
       view.ragdoll?.update(dt);
       // Squash and stretch: a stiff spring so limbs flex and snap back.
       view.squashVel += (-view.squash * 420 - view.squashVel * 18) * Math.min(real, 1 / 30);
@@ -699,9 +750,72 @@ export class FightScene {
     }
   }
 
+  /**
+   * Sets an active ragdoll's muscles from what the fighter is doing: floppy in the air so limbs
+   * flail, gathering through the knockdown, firm for the get-up, then a short blend back.
+   */
+  private muscles(view: View, real: number): void {
+    const ragdoll = view.ragdoll;
+    if (!ragdoll?.active) return;
+    const f = this.sim.fighters[this.views[0] === view ? 0 : 1];
+    if (view.release > 0) {
+      view.release -= real;
+      ragdoll.setMuscles(0.3, 0.5, 0.9);
+      if (view.release <= 0) {
+        view.release = 0;
+        view.ragdoll = null;
+      }
+      return;
+    }
+    switch (f.state) {
+      case S.launched:
+        ragdoll.setMuscles(0.006, 0.25, 0.15);
+        return;
+      case S.knockdown: {
+        const u = f.stunTotal > 0 ? 1 - f.stun / f.stunTotal : 1;
+        ragdoll.setMuscles(0.01 + 0.05 * u * u, 0.25, 0.7);
+        return;
+      }
+      case S.getup:
+      case S.roll:
+        ragdoll.setMuscles(0.2, 0.4, 0.9);
+        return;
+      default:
+        view.release = RELEASE;
+    }
+  }
+
+  /** Where the simulation's pose puts each joint this frame, metres. */
+  private poseJoints(view: View, alpha: number, out: Float32Array): void {
+    jointsBetween(view.prev, view.curr, alpha, view.local);
+    const x = view.px + (view.cx - view.px) * alpha;
+    const y = view.py + (view.cy - view.py) * alpha;
+    for (let j = 0; j < JOINT_COUNT; j++) {
+      out[2 * j] = x + view.facing * view.local[2 * j];
+      out[2 * j + 1] = y + view.local[2 * j + 1];
+    }
+  }
+
   private place(view: View, alpha: number): void {
     const cam = this.camera;
-    if (view.ragdoll) {
+    if (view.ragdoll?.active) {
+      const ox = view.target[2 * J.pelvis];
+      const oy = view.target[2 * J.pelvis + 1];
+      this.poseJoints(view, alpha, view.target);
+      view.ragdoll.target.set(view.target);
+      // How fast the pose is carrying the body, for the ragdoll's root to match.
+      if (this.stepDt > 0) {
+        view.ragdoll.tvx = Math.max(-15, Math.min(15, (view.target[2 * J.pelvis] - ox) / this.stepDt));
+        view.ragdoll.tvy = Math.max(-15, Math.min(15, (view.target[2 * J.pelvis + 1] - oy) / this.stepDt));
+      }
+      if (view.release > 0) {
+        const w = 1 - view.release / RELEASE;
+        const e = w * w * (3 - 2 * w);
+        for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = view.ragdoll.pos[i] + (view.target[i] - view.ragdoll.pos[i]) * e;
+      } else {
+        view.world.set(view.ragdoll.pos);
+      }
+    } else if (view.ragdoll) {
       view.world.set(view.ragdoll.pos);
     } else {
       const side = this.views[0] === view ? 0 : 1;
@@ -864,7 +978,7 @@ export class FightScene {
     drawFigure(ctx, view.screen, {
       ink,
       scale: cam.ppm,
-      facing: view.ragdoll ? (view.screen[2 * J.head] > view.screen[2 * J.pelvis] ? 1 : -1) * 1 : view.facing,
+      facing: view.ragdoll && !view.ragdoll.active ? (view.screen[2 * J.head] > view.screen[2 * J.pelvis] ? 1 : -1) * 1 : view.facing,
       flash: view.flash,
       flashJoint: view.limbJoint,
       flashLimb: view.limbFlash,
