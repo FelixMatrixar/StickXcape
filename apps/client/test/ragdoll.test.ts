@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { builtinPose, P, stancePose } from '../src/engine/poses.ts';
 import { createPose, J, JOINT_COUNT } from '../src/engine/skeleton.ts';
 import { jointsBetween } from '../src/render/pose.ts';
@@ -20,6 +20,18 @@ function stance(x: number, y = 0): Float32Array {
   stancePose(pose, 0);
   return joints(pose, x, y);
 }
+
+// The ragdoll scatters its starting speeds with Math.random; seed it so every run is the same.
+beforeEach(() => {
+  let s = 12345;
+  vi.spyOn(Math, 'random').mockImplementation(() => {
+    s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+    return s / 4294967296;
+  });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const lowest = (r: Ragdoll) => r.bottom;
 const pelvisGap = (r: Ragdoll) => Math.hypot(r.pos[2 * J.pelvis] - r.target[2 * J.pelvis], r.pos[2 * J.pelvis + 1] - r.target[2 * J.pelvis + 1]);
@@ -49,13 +61,16 @@ describe('ragdoll and ledges', () => {
     expect(lowest(r)).toBeLessThan(0.55 + 0.2);
   });
 
-  it('bounces off the side of a ledge it slides into', () => {
+  it('never lets a point inside a ledge it slides into', () => {
     const r = new Ragdoll(stance(3.3), 4, 0, 0);
     r.ledges = [ledge];
-    for (let i = 0; i < 120; i++) r.update(1 / 60);
-    for (let j = 0; j < JOINT_COUNT; j++) {
-      // Below the top, nothing ends up inside the block.
-      if (r.pos[2 * j + 1] < ledge.top) expect(r.pos[2 * j]).toBeLessThan(ledge.x0 + 0.01);
+    for (let i = 0; i < 120; i++) {
+      r.update(1 / 60);
+      // It may stop at the side or topple over the top, but never ends up inside the block.
+      for (let j = 0; j < JOINT_COUNT; j++) {
+        const x = r.pos[2 * j];
+        expect(r.pos[2 * j + 1] < ledge.top && x > ledge.x0 + 0.01 && x < ledge.x1 - 0.01).toBe(false);
+      }
     }
   });
 });
