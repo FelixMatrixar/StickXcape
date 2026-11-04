@@ -14,6 +14,10 @@ export class Ragdoll {
   private readonly links: [number, number, number][] = [];
   private acc = 0;
   arenaWidth = 10;
+  dropLeft = false;
+  dropRight = false;
+  /** Fell past a drop edge: no floor any more. */
+  private fallen = false;
   /** Called when a point hits the floor hard, with the impact speed (m/s). */
   onImpact: ((speed: number, x: number) => void) | null = null;
   private impactCooldown = 0;
@@ -89,9 +93,12 @@ export class Ragdoll {
   private collide(): void {
     const p = this.pos;
     const q = this.prev;
+    if (!this.fallen && p[2 * J.pelvis + 1] < -0.3) this.fallen = true;
     for (let j = 0; j < JOINT_COUNT; j++) {
       const radius = j === J.head ? 0.11 : 0.03;
-      if (p[2 * j + 1] < radius) {
+      const x = p[2 * j];
+      const overFloor = !this.fallen && !(this.dropLeft && x < 0) && !(this.dropRight && x > this.arenaWidth);
+      if (overFloor && p[2 * j + 1] < radius) {
         const vy = (p[2 * j + 1] - q[2 * j + 1]) / SUBSTEP;
         if (vy < -2.5 && this.impactCooldown <= 0 && this.onImpact) {
           this.impactCooldown = 0.12;
@@ -102,10 +109,10 @@ export class Ragdoll {
         q[2 * j + 1] = p[2 * j + 1] + Math.min(0, vy) * SUBSTEP * 0.25;
         q[2 * j] = p[2 * j] - (p[2 * j] - q[2 * j]) * 0.82;
       }
-      if (p[2 * j] < 0.15) {
+      if (!this.dropLeft && p[2 * j] < 0.15) {
         p[2 * j] = 0.15;
         q[2 * j] = p[2 * j] + (p[2 * j] - q[2 * j]) * 0.3;
-      } else if (p[2 * j] > this.arenaWidth - 0.15) {
+      } else if (!this.dropRight && p[2 * j] > this.arenaWidth - 0.15) {
         p[2 * j] = this.arenaWidth - 0.15;
         q[2 * j] = p[2 * j] + (p[2 * j] - q[2 * j]) * 0.3;
       }
@@ -115,6 +122,12 @@ export class Ragdoll {
   /** Centre of the body, for the camera. */
   get centerX(): number {
     return this.pos[2 * J.pelvis];
+  }
+
+  get bottom(): number {
+    let bottom = Infinity;
+    for (let j = 0; j < JOINT_COUNT; j++) bottom = Math.min(bottom, this.pos[2 * j + 1]);
+    return bottom;
   }
 
   get top(): number {

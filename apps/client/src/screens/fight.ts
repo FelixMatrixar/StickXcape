@@ -13,6 +13,7 @@ import { music } from '../audio/music.ts';
 import { fightSound, stinger, ui } from '../audio/sfx.ts';
 import { PracticeBot, type BotLevel } from '../engine/bot.ts';
 import { FightSim, MAX_ROUNDS, PHASE, type SimEvent } from '../engine/sim.ts';
+import { simArena } from '../render/arena-files.ts';
 import type { ArenaArt } from '../render/arenas.ts';
 import type { Ink } from '../render/inks.ts';
 import { FightScene } from '../render/scene.ts';
@@ -80,7 +81,7 @@ export function fightScreen(config: FightConfig): Screen {
   if (import.meta.env.DEV) (window as unknown as { __fight?: unknown }).__fight = { get sim() { return sim; }, controls, scene };
 
   function newSim(): FightSim {
-    return new FightSim({ seed: config.seed, arena: { width: config.arena.file.width, spawns: config.arena.file.spawns }, loadouts: config.loadouts });
+    return new FightSim({ seed: config.seed, arena: simArena(config.arena.file), loadouts: config.loadouts });
   }
 
   let bot = config.mode === 'practice' ? new PracticeBot(config.localSide === 0 ? 1 : 0, config.seed, config.botLevel ?? 'normal') : null;
@@ -137,6 +138,19 @@ export function fightScreen(config: FightConfig): Screen {
           hud.announce('K.O.', { ko: true, hold: 1500 });
           stinger.ko();
         }, 420);
+        return;
+      case 'ringout':
+        music.cut();
+        setTimeout(() => {
+          hud.announce('Ring out', { ko: true, hold: 1500 });
+          stinger.ko();
+        }, 380);
+        return;
+      case 'guardBreak':
+        hud.pulse(event.side, 'guard');
+        return;
+      case 'tired':
+        hud.pulse(event.side, 'stamina');
         return;
       case 'timeup':
         music.cut();

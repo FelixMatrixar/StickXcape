@@ -1532,6 +1532,64 @@ input[type='range'].slider {
   }
 }
 
+.meters {
+  display: flex;
+  gap: 5px;
+  width: 74%;
+}
+
+.hud-side.right .meters {
+  flex-direction: row-reverse;
+}
+
+.meter-bar {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(20, 16, 18, 0.5);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  overflow: hidden;
+  transform: skewX(-18deg);
+}
+
+.hud-side.right .meter-bar {
+  transform: skewX(18deg);
+}
+
+.meter-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  transform: scaleX(var(--v, 1));
+  transition: transform 0.12s ease-out;
+}
+
+.hud-side.right .meter-fill {
+  transform-origin: right;
+}
+
+.meter-bar.stamina .meter-fill {
+  background: linear-gradient(90deg, #f2b134, #ffd770);
+}
+
+.meter-bar.guard .meter-fill {
+  background: linear-gradient(90deg, #4f7cff, #a8c0ff);
+}
+
+.meter-bar.is-low .meter-fill {
+  filter: saturate(0.25) brightness(0.8);
+}
+
+.meter-bar.is-broken {
+  border-color: #ff6a52;
+  animation: blink 0.4s ease-in-out infinite;
+}
+
+.meter-bar.is-pulse {
+  animation: bar-shake 0.3s ease;
+}
+
 .hud-dots {
   display: flex;
   gap: 6px;

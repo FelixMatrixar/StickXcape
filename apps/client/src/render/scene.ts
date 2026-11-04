@@ -6,7 +6,8 @@
  */
 import { fromFixed } from '@sticxcape/shared';
 import { PHASE, S, type FightSim, type Fighter, type SimEvent } from '../engine/sim.ts';
-import { J, JOINT_COUNT, POSE_SIZE } from '../engine/skeleton.ts';
+import { sampleMove, type CompiledMove } from '../engine/moves.ts';
+import { blendPose, createPose, J, JOINT_COUNT, POSE_SIZE } from '../engine/skeleton.ts';
 import { paperGrain, type ArenaArt } from './arenas.ts';
 import { FightCamera } from './camera.ts';
 import { rgba, type Ink } from './inks.ts';
@@ -30,6 +31,13 @@ export interface SceneSound {
   knockdown(pan: number): void;
   body(intensity: number, pan: number): void;
   ko(): void;
+  grab(pan: number): void;
+  slam(pan: number): void;
+  clash(pan: number): void;
+  guardBreak(pan: number): void;
+  tired(pan: number): void;
+  roll(pan: number): void;
+  fall(): void;
 }
 
 export type HapticKind = 'light' | 'heavy' | 'parry' | 'block' | 'ko';
@@ -49,6 +57,8 @@ export interface SceneOptions {
   damageNumbers?: boolean;
   /** Fewer layers for the title screen's background fight. */
   quiet?: boolean;
+  /** Recorded idle stances (LS-12), drawn in place of the stance: looks only, hurtboxes don't change. */
+  idles?: [CompiledMove | null, CompiledMove | null];
   onEvent?: (event: SimEvent) => void;
 }
 
@@ -95,6 +105,8 @@ class View {
   readonly footY = new Float32Array([0, 0]);
   ragdoll: Ragdoll | null = null;
   ready = false;
+  /** How much of the recorded idle stance shows, 0..1. */
+  idleW = 0;
 }
 
 export class FightScene {
@@ -126,6 +138,10 @@ export class FightScene {
   private vignette: HTMLCanvasElement | null = null;
   private lastFrameMs = 16;
   private stepClock = 0;
+  idles: [CompiledMove | null, CompiledMove | null];
+  private readonly mixA = createPose();
+  private readonly mixB = createPose();
+  private readonly mixIdle = createPose();
 
   constructor(options: SceneOptions) {
     this.canvas = options.canvas;
@@ -141,7 +157,9 @@ export class FightScene {
     this.damageNumbers = options.damageNumbers ?? false;
     this.quiet = options.quiet ?? false;
     this.onEvent = options.onEvent ?? null;
+    this.idles = options.idles ?? [null, null];
     this.camera.arenaWidth = fromFixed(this.sim.arenaWidth);
+    this.camera.edgeMargin = this.sim.dropLeft || this.sim.dropRight ? 1.7 : 0.6;
     this.resize();
     this.syncViews(true);
   }
@@ -149,6 +167,7 @@ export class FightScene {
   /** Swaps in a new simulation (rematch) without rebuilding the scene. */
   setSim(sim: FightSim): void {
     this.sim = sim;
+    this.camera.edgeMargin = sim.dropLeft || sim.dropRight ? 1.7 : 0.6;
     this.particles.clear();
     this.popups.clear();
     for (const view of this.views) {
@@ -219,7 +238,7 @@ export class FightScene {
     for (const f of this.sim.fighters) {
       const view = this.views[f.side];
       if (view.ragdoll) continue;
-      const lying = f.state === S.knockdown || f.state === S.ko || f.state === S.launched;
+      const lying = f.state === S.knockdown || f.state === S.ko || f.state === S.launched || f.state === S.roll || f.state === S.thrown || f.falling === 1;
       // Feet.
       for (let foot = 0; foot < 2; foot++) {
         const ankle = foot === 0 ? J.lAnkle : J.rAnkle;
@@ -242,7 +261,7 @@ export class FightScene {
         const speed = Math.hypot(dx, dy) * 60;
         const before = view.tipSpeed[i];
         view.tipSpeed[i] = speed;
-        if (speed > WHOOSH_SPEED && before <= WHOOSH_SPEED && view.whooshCool[i] <= 0 && f.state === S.attack) {
+        if (speed > WHOOSH_SPEED && before <= WHOOSH_SPEED && view.whooshCool[i] <= 0 && (f.state === S.attack || f.state === S.throw || f.state === S.grab)) {
           view.whooshCool[i] = 0.22;
           this.sound?.whoosh(speed, this.pan(view.stepCurr[2 * tip]));
         }
@@ -391,6 +410,92 @@ export class FightScene {
       case 'ko':
         this.knockout(event);
         return;
+      case 'grab': {
+        const x = fromFixed(event.x);
+        const y = fromFixed(event.y);
+        ps.spawn(K.star, x, y, { size: 0.05, size2: 0.32, life: 0.2, color: '#ffffff', rot: Math.PI / 4 });
+        ps.spawn(K.ring, x, y, { size: 0.05, size2: 0.3, life: 0.22, color: this.inks[event.side].glow });
+        this.views[event.target].limbFlash = 0.8;
+        this.views[event.target].limbJoint = J.neck;
+        this.camera.addTrauma(0.1);
+        this.camera.zoomPunch(0.03);
+        this.sound?.grab(this.pan(x));
+        this.haptic?.('light');
+        return;
+      }
+      case 'throw': {
+        const x = fromFixed(event.x);
+        const attacker = this.inks[event.side];
+        dust(ps, x, 16, 1.4, 2);
+        ps.spawn(K.ring, x, 0.03, { size: 0.15, size2: 1.1, life: 0.42, color: 'rgba(255,240,220,0.8)' });
+        ps.spawn(K.burst, x, 0.25, { size: 0.06, size2: 0.5, life: 0.3, color: '#ffffff', rot: Math.random() * 3 });
+        inkSpray(ps, x, 0.3, 0, 1, 18, 6, attacker.ink, 0.026);
+        this.popups.show('THROW', x, 1.5, { fill: '#ffffff', stroke: attacker.deep, size: 0.26, life: 0.85 });
+        const target = this.views[event.target];
+        target.squashVel = 6;
+        target.squashAngle = -Math.PI / 2;
+        target.flash = 0.8;
+        this.flashAlpha = Math.max(this.flashAlpha, 0.2 * this.flashes);
+        this.camera.addTrauma(0.38);
+        this.camera.zoomPunch(0.07);
+        this.sound?.slam(this.pan(x));
+        this.haptic?.('heavy');
+        return;
+      }
+      case 'clash': {
+        const x = fromFixed(event.x);
+        const y = fromFixed(event.y);
+        sparks(ps, x, y, 14, 7, '#fff4d6');
+        ps.spawn(K.ring, x, y, { size: 0.05, size2: 0.45, life: 0.3, color: '#ffffff' });
+        this.popups.show('BREAK', x, y + 0.45, POP.blocked);
+        this.camera.addTrauma(0.14);
+        this.sound?.clash(this.pan(x));
+        this.haptic?.('block');
+        return;
+      }
+      case 'guardBreak': {
+        const x = fromFixed(event.x);
+        const y = fromFixed(event.y);
+        for (let i = 0; i < 18; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const v = 3 + Math.random() * 5;
+          ps.spawn(K.shard, x, y, { vx: Math.cos(a) * v, vy: Math.sin(a) * v + 1.5, life: 1.1, size: 0.035 + Math.random() * 0.04, rot: a, vr: (Math.random() - 0.5) * 18, color: 'rgba(200, 220, 255, 0.95)', gravity: 0.7 });
+        }
+        ps.spawn(K.ring, x, y, { size: 0.08, size2: 0.85, life: 0.4, color: '#cfe0ff' });
+        sparks(ps, x, y, 12, 8, '#e4edff');
+        this.popups.show('GUARD BREAK', x, y + 0.55, { fill: '#e9f0ff', stroke: '#1b3a92', size: 0.25, life: 1.1 });
+        this.views[event.side].flash = 0.7;
+        this.flashAlpha = Math.max(this.flashAlpha, 0.18 * this.flashes);
+        this.camera.addTrauma(0.32);
+        this.camera.zoomPunch(0.05);
+        this.sound?.guardBreak(this.pan(x));
+        this.haptic?.('heavy');
+        return;
+      }
+      case 'tired': {
+        const f = this.sim.fighters[event.side];
+        const x = fromFixed(f.x);
+        this.popups.show('TIRED', x, 2.05, { fill: '#e8e2d6', stroke: '#6f6a62', size: 0.15, life: 0.6, rise: 0.4 }, `tired${event.side}`);
+        for (let i = 0; i < 4; i++) ps.spawn(K.puff, x + f.facing * 0.15, 1.55, { vx: f.facing * (0.3 + Math.random() * 0.4), vy: 0.3 + Math.random() * 0.3, life: 0.6, size: 0.02, size2: 0.07, color: 'rgba(240,236,228,0.6)', drag: 2 });
+        this.sound?.tired(this.pan(x));
+        return;
+      }
+      case 'roll': {
+        const x = fromFixed(event.x);
+        dust(ps, x, 8, 0.8, 1.1);
+        this.sound?.roll(this.pan(x));
+        return;
+      }
+      case 'ringout': {
+        // Off the edge: slow motion while they fall (CB-8).
+        this.slowmo = 1;
+        this.koDim = 0.7;
+        this.camera.focus(fromFixed(event.x), -0.6, 0.55, 2.4, 0.08);
+        this.camera.addTrauma(0.2);
+        this.sound?.fall();
+        this.haptic?.('ko');
+        return;
+      }
     }
   }
 
@@ -430,6 +535,8 @@ export class FightScene {
     for (let i = 0; i < JOINT_COUNT * 2; i++) view.world[i] = fromFixed(loser.world[i]);
     const ragdoll = new Ragdoll(view.world, fromFixed(event.vx) * 60, fromFixed(event.vy) * 60, -loser.facing * 6.5 * (0.7 + Math.random() * 0.6));
     ragdoll.arenaWidth = fromFixed(this.sim.arenaWidth);
+    ragdoll.dropLeft = this.sim.dropLeft;
+    ragdoll.dropRight = this.sim.dropRight;
     ragdoll.onImpact = (speed, px) => {
       const strength = Math.min(1, speed / 8);
       dust(ps, px, 3 + Math.round(strength * 8), 0.6, 0.6 + strength * 1.4);
@@ -450,11 +557,13 @@ export class FightScene {
     const ax = a.ragdoll ? a.ragdoll.centerX : a.cx;
     const bx = b.ragdoll ? b.ragdoll.centerX : b.cx;
     let top = 1.8;
+    let bottom = 0;
     for (const view of this.views) {
       const t = view.ragdoll ? view.ragdoll.top : view.cy + 1.75;
       top = Math.max(top, t);
+      bottom = Math.min(bottom, view.ragdoll ? view.ragdoll.bottom : view.cy);
     }
-    return { x0: Math.min(ax, bx), x1: Math.max(ax, bx), top };
+    return { x0: Math.min(ax, bx), x1: Math.max(ax, bx), top, bottom };
   }
 
   /** Advances cosmetic time and draws. `dtMs` is real time since the last frame. */
@@ -495,6 +604,10 @@ export class FightScene {
       view.flash = Math.max(0, view.flash - real * 9);
       view.limbFlash = Math.max(0, view.limbFlash - real * 6);
       for (let i = 0; i < TIPS.length; i++) view.whooshCool[i] -= real;
+      // Fade the recorded idle stance in while standing still, out as soon as anything happens.
+      const f = this.sim.fighters[this.views[0] === view ? 0 : 1];
+      const still = f.state === S.idle && f.walk === 0 && f.crouch === 0;
+      view.idleW = Math.max(0, Math.min(1, view.idleW + (still ? real * 3 : -real * 12)));
       if (this.sim.hitstop === 0) view.jitter = Math.max(0, view.jitter - real * 10);
     }
   }
@@ -558,7 +671,18 @@ export class FightScene {
     if (view.ragdoll) {
       view.world.set(view.ragdoll.pos);
     } else {
-      jointsBetween(view.prev, view.curr, alpha, view.local);
+      const side = this.views[0] === view ? 0 : 1;
+      const idle = this.idles[side];
+      if (idle && view.idleW > 0.001) {
+        blendPose(view.prev, view.curr, Math.round(alpha * 65536), this.mixA);
+        const frame = ((this.time * 60) % idle.frameCount + idle.frameCount) % idle.frameCount;
+        sampleMove(idle, Math.floor(frame * 65536), this.mixIdle);
+        this.mixIdle[0] = 0;
+        blendPose(this.mixA, this.mixIdle, Math.round(view.idleW * 65536), this.mixB);
+        jointsBetween(this.mixB, this.mixB, 0, view.local);
+      } else {
+        jointsBetween(view.prev, view.curr, alpha, view.local);
+      }
       const x = view.px + (view.cx - view.px) * alpha;
       const y = view.py + (view.cy - view.py) * alpha;
       for (let j = 0; j < JOINT_COUNT; j++) {
@@ -611,7 +735,7 @@ export class FightScene {
 
   private drawOrder(): [0 | 1, 0 | 1] {
     const [a, b] = this.sim.fighters;
-    const attacking = (f: Fighter) => f.state === S.attack;
+    const attacking = (f: Fighter) => f.state === S.attack || f.state === S.throw || f.state === S.grab;
     if (attacking(a) && !attacking(b)) return [1, 0];
     if (attacking(b) && !attacking(a)) return [0, 1];
     return this.localSide === 0 ? [1, 0] : [0, 1];
@@ -628,9 +752,11 @@ export class FightScene {
         maxX = Math.max(maxX, view.world[2 * j]);
         low = Math.min(low, view.world[2 * j + 1]);
       }
+      const cx = (minX + maxX) / 2;
+      const overVoid = (this.sim.dropLeft && cx < 0) || (this.sim.dropRight && cx > this.camera.arenaWidth) || low < -0.05;
+      if (overVoid) continue;
       const height = Math.max(0, low);
       const fade = Math.max(0.2, 1 - height / 2.5);
-      const cx = (minX + maxX) / 2;
       const w = (Math.max(0.36, maxX - minX) * 0.55 + 0.1) * fade;
       ctx.fillStyle = `rgba(20, 12, 20, ${0.26 * fade})`;
       ctx.beginPath();

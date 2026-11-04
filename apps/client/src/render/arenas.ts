@@ -3,7 +3,8 @@
  * is a little 2.5D stage: a sky, layers at depths behind the fight plane (parallax comes from
  * the camera dollying), a perspective floor, and some life: lights, lanterns, leaves, birds.
  */
-import { ARENA_FORMAT_VERSION, type ArenaFile } from '@sticxcape/shared';
+import type { ArenaFile } from '@sticxcape/shared';
+import { ARENA_FILES } from './arena-files.ts';
 import type { FightCamera } from './camera.ts';
 import { K, type Particles } from './particles.ts';
 
@@ -21,21 +22,6 @@ export interface ArenaArt {
   ambient(ps: Particles, cam: FightCamera, dt: number): void;
 }
 
-const WIDTH = 10;
-
-function arenaFile(id: string, name: string): ArenaFile {
-  return {
-    id,
-    version: ARENA_FORMAT_VERSION,
-    name,
-    layers: [`builtin:${id}`],
-    floor: 0,
-    width: WIDTH,
-    spawns: [3.6, 6.4],
-    ledges: [],
-    edges: { left: 'wall', right: 'wall' },
-  };
-}
 
 /** Seeded random numbers so the art paints the same every time. */
 function seeded(seed: number): () => number {
@@ -148,7 +134,7 @@ function rooftop(): ArenaArt {
       x += w + 0.2 + rand() * 0.8;
     }
   });
-  const near: Layer = makeLayer(3.2, -6, 0, 22, 4, (g, px, py) => {
+  const near: Layer = makeLayer(3.2, -0.15, 0, 10.3, 4, (g, px, py) => {
     // Parapet wall behind the fight line, AC units and pipes.
     g.fillStyle = '#3a2d3a';
     g.fillRect(px(-6), py(1.05), 22 * RES, 1.05 * RES);
@@ -184,13 +170,15 @@ function rooftop(): ArenaArt {
 
   const birds = Array.from({ length: 5 }, () => ({ x: rand(), y: rand(), s: 0.6 + rand() * 0.6 }));
   const lights = Array.from({ length: 6 }, () => ({ x: -10 + rand() * 30, y: 8 + rand() * 7, phase: rand() * 6 }));
+  // Street lights far below, seen past the roof's edges.
+  const street = Array.from({ length: 40 }, () => ({ x: -14 + rand() * 38, y: -6 - rand() * 9, d: 18 + rand() * 20, warm: rand() < 0.7 }));
 
   return {
     id: 'rooftop',
     name: 'Rooftop at Dusk',
     blurb: 'Warm wind over a sleeping city',
     swatch: ['#f2c6a8', '#9a6a86', '#2c222c'],
-    file: arenaFile('rooftop', 'Rooftop at Dusk'),
+    file: ARENA_FILES.rooftop,
     draw(ctx, cam, t) {
       const { width: w, height: h } = cam;
       const sky = ctx.createLinearGradient(0, 0, 0, h);
@@ -248,8 +236,23 @@ function rooftop(): ArenaArt {
         ctx.stroke();
       }
       drawLayer(ctx, cam, mid);
+      // Below roof level: the dark street, far down. It shows past the drop edges.
+      const voidTop = cam.sy(0, 11);
+      const drop = ctx.createLinearGradient(0, voidTop, 0, h);
+      drop.addColorStop(0, 'rgba(58, 40, 60, 0.2)');
+      drop.addColorStop(0.2, '#35263a');
+      drop.addColorStop(1, '#120c14');
+      ctx.fillStyle = drop;
+      ctx.fillRect(0, voidTop, w, h - voidTop);
+      for (const lamp of street) {
+        const flicker = 0.6 + 0.4 * Math.sin(t * 1.7 + lamp.x);
+        ctx.fillStyle = lamp.warm ? `rgba(255, 196, 120, ${0.55 * flicker})` : `rgba(170, 200, 255, ${0.4 * flicker})`;
+        ctx.beginPath();
+        ctx.arc(cam.sx(lamp.x, lamp.d), cam.sy(lamp.y, lamp.d), Math.max(1, cam.k(lamp.d) * 0.08), 0, Math.PI * 2);
+        ctx.fill();
+      }
       drawLayer(ctx, cam, near);
-      drawFloor(ctx, cam, 3.2, '#3b2f3b', '#221a23', 'rgba(255, 214, 190, 0.2)', 'rgba(20, 12, 20, 0.35)', t, 'seams');
+      drawFloor(ctx, cam, 3.2, '#3b2f3b', '#221a23', 'rgba(255, 214, 190, 0.2)', 'rgba(20, 12, 20, 0.35)', t, 'seams', [0, ARENA_FILES.rooftop.width]);
     },
     drawFront(ctx, cam) {
       // A soft dusk haze at the bottom edge.
@@ -351,7 +354,7 @@ function dojo(): ArenaArt {
     name: 'Bamboo Dojo',
     blurb: 'Paper walls, quiet grove, loud fists',
     swatch: ['#efe0c4', '#6e8a64', '#b8322a'],
-    file: arenaFile('dojo', 'Bamboo Dojo'),
+    file: ARENA_FILES.dojo,
     draw(ctx, cam, t) {
       const { width: w, height: h } = cam;
       const sky = ctx.createLinearGradient(0, 0, 0, h);
@@ -440,14 +443,53 @@ function dojo(): ArenaArt {
 }
 
 /** A perspective floor from the horizon down to the bottom of the screen. */
-function drawFloor(ctx: CanvasRenderingContext2D, cam: FightCamera, back: number, top: string, bottom: string, edge: string, line: string, t: number, style: 'planks' | 'seams'): void {
+function drawFloor(
+  ctx: CanvasRenderingContext2D,
+  cam: FightCamera,
+  back: number,
+  top: string,
+  bottom: string,
+  edge: string,
+  line: string,
+  t: number,
+  style: 'planks' | 'seams',
+  extent?: [number, number],
+): void {
   const yBack = cam.sy(0, back);
   const yFront = cam.height;
   const g = ctx.createLinearGradient(0, yBack, 0, yFront);
   g.addColorStop(0, top);
   g.addColorStop(1, bottom);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, yBack, cam.width, yFront - yBack);
+  // The depth at which the floor meets the bottom of the screen.
+  const kBottom = (cam.height - cam.horizon) / Math.max(0.01, cam.camY);
+  const front = cam.focal / Math.max(1, kBottom) - cam.focal / cam.ppm;
+  ctx.save();
+  if (extent) {
+    const [x0, x1] = extent;
+    // The roof's side faces drop away under each edge.
+    ctx.fillStyle = '#17111a';
+    for (const x of [x0, x1]) {
+      ctx.beginPath();
+      ctx.moveTo(cam.sx(x, back), cam.sy(0, back));
+      ctx.lineTo(cam.sx(x, front), cam.sy(0, front));
+      ctx.lineTo(cam.sx(x, front), cam.sy(-0.35, front));
+      ctx.lineTo(cam.sx(x, back), cam.sy(-0.35, back));
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.moveTo(cam.sx(x0, back), cam.sy(0, back));
+    ctx.lineTo(cam.sx(x1, back), cam.sy(0, back));
+    ctx.lineTo(cam.sx(x1, front), cam.sy(0, front));
+    ctx.lineTo(cam.sx(x0, front), cam.sy(0, front));
+    ctx.closePath();
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.clip();
+  } else {
+    ctx.fillStyle = g;
+    ctx.fillRect(0, yBack, cam.width, yFront - yBack);
+  }
   // Lines receding to the vanishing point.
   const vx = cam.width / 2;
   const vy = cam.horizon;
@@ -477,6 +519,34 @@ function drawFloor(ctx: CanvasRenderingContext2D, cam: FightCamera, back: number
   ctx.moveTo(0, cam.sy(0, back));
   ctx.lineTo(cam.width, cam.sy(0, back));
   ctx.stroke();
+  ctx.restore();
+  if (extent) {
+    // Hazard paint along each drop edge, so players can see where the roof ends.
+    for (const [x, inward] of [
+      [extent[0], 1],
+      [extent[1], -1],
+    ] as const) {
+      const stripes = 9;
+      for (let i = 0; i < stripes; i++) {
+        const d0 = back + ((front - back) * i) / stripes;
+        const d1 = back + ((front - back) * (i + 0.5)) / stripes;
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(242, 177, 52, 0.75)' : 'rgba(22, 16, 20, 0.75)';
+        ctx.beginPath();
+        ctx.moveTo(cam.sx(x, d0), cam.sy(0, d0));
+        ctx.lineTo(cam.sx(x + inward * 0.16, d0), cam.sy(0, d0));
+        ctx.lineTo(cam.sx(x + inward * 0.16, d1), cam.sy(0, d1));
+        ctx.lineTo(cam.sx(x, d1), cam.sy(0, d1));
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255, 226, 200, 0.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cam.sx(x, back), cam.sy(0, back));
+      ctx.lineTo(cam.sx(x, front), cam.sy(0, front));
+      ctx.stroke();
+    }
+  }
   void t;
 }
 
