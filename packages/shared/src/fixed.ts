@@ -73,7 +73,7 @@ function truncDiv(n: number, d: number): number {
 export const ANGLE_TURN = 65536;
 export const ANGLE_QUARTER = ANGLE_TURN / 4;
 
-/** sin of a binary angle, in Q16.16. A quarter-wave table with linear interpolation; error under 1/65536. */
+/** sin of a binary angle, in Q16.16. A quarter-wave table with linear interpolation; error under 2/65536. */
 export function fixedSin(angle: number): number {
   const a = angle & 0xffff;
   const quadrant = a >>> 14;
@@ -83,7 +83,8 @@ export function fixedSin(angle: number): number {
   const frac = index & 63;
   const lo = SIN_TABLE[i]!;
   const value = frac === 0 ? lo : lo + (((SIN_TABLE[i + 1]! - lo) * frac) >> 6);
-  return quadrant & 2 ? -value : value;
+  // `| 0` so a half turn gives 0, not -0.
+  return quadrant & 2 ? -value | 0 : value;
 }
 
 /** cos of a binary angle, in Q16.16. */

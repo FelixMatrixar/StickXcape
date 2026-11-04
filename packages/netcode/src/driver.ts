@@ -35,8 +35,9 @@ export class LockstepDriver {
 
   /** Call once per animation frame with its timestamp in ms. Returns how many frames were simulated. */
   update(nowMs: number): number {
-    if (this.last === null) this.last = nowMs - FRAME_MS;
-    this.accumulator = Math.min(this.accumulator + (nowMs - this.last), MAX_CATCH_UP_MS);
+    // The first update simulates one frame. (nowMs - (nowMs - FRAME_MS) can round to just under it.)
+    const elapsed = this.last === null ? FRAME_MS : nowMs - this.last;
+    this.accumulator = Math.min(this.accumulator + elapsed, MAX_CATCH_UP_MS);
     this.last = nowMs;
 
     let steps = 0;

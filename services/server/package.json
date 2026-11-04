@@ -6,8 +6,10 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b",
-    "dev": "node --watch --conditions=source --env-file-if-exists=.env src/index.ts",
+    "build": "tsc -b && node scripts/build-lab.ts",
+    "build:lab": "node scripts/build-lab.ts",
+    "lab:watch": "node scripts/build-lab.ts --watch",
+    "dev": "node scripts/build-lab.ts && node --watch --conditions=source --env-file-if-exists=.env src/index.ts",
     "start": "node --env-file-if-exists=.env dist/index.js"
   },
   "dependencies": {

@@ -1,0 +1,59 @@
+# Staging on Fly.io for playtests (Backend PRD, week 3). Rooms live in memory, so this runs one
+# machine in one region: a second machine would split the rooms between them. A deploy restarts
+# it, which also resets staging; phones in a room get server_shutdown and reload.
+#
+# First time (pick your own app name and set PUBLIC_URL to match):
+#   fly launch --no-deploy --copy-config --name sticxcape-staging
+#   fly secrets set MODEL_API_KEY=<test key> ADMIN_TOKEN=<password for /admin>
+#   fly deploy
+#   fly scale count 1
+# After that, `fly deploy` or the "Deploy staging" GitHub workflow.
+
+app = "sticxcape-staging"
+# The region nearest the playtesters; `fly platform regions` lists them.
+primary_region = "ams"
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PUBLIC_URL = "https://sticxcape-staging.fly.dev"
+  # Fly's proxy is the one hop in front of the server.
+  TRUST_PROXY = "1"
+  # Private port for Fly's managed Prometheus; never exposed publicly.
+  METRICS_PORT = "9091"
+  # Staging uses a test key with low limits (Integration PRD: environments).
+  AI_MOVE_NAMES_PER_DAY = "15"
+  AI_MATCH_TIPS_PER_DAY = "30"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # The relay must stay up while phones are connected, so the machine never sleeps.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    # Each phone holds one WebSocket.
+    type = "connections"
+    soft_limit = 1500
+    hard_limit = 2000
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "2s"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

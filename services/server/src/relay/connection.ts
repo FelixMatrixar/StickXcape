@@ -54,6 +54,11 @@ export class Connection {
     if (this.rtts.length > RTT_SAMPLES) this.rtts.shift();
   }
 
+  /** Round trips still to measure before rtt() is a median of the full 5. */
+  get missingRtts(): number {
+    return RTT_SAMPLES - this.rtts.length;
+  }
+
   /** Median of the latest round trips to the relay, or null before the first pong. */
   rtt(): number | null {
     if (this.rtts.length === 0) return null;

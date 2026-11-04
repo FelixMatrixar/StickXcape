@@ -25,25 +25,31 @@ The services are everything that runs off the phone. In the MVP they are deliber
 
 ## Progress
 
-Updated 2026-11-03. The code is on the `backend-mvp` branch. Nothing has been tried on phones yet, and there are no automated tests yet.
+Updated 2026-11-04. The code is on the `backend-mvp` branch. 135 automated tests pass and bots have played matches through the relay locally, but nothing has been tried on phones or deployed yet.
 
 | Deliverable | Status | Code |
 | --- | --- | --- |
-| Shared types package: move and arena files, room messages, HTTP API, button bits, input-delay rule, fixed-point maths | Written | `packages/shared` |
-| Web hosting | Written: serves the web app, invite links and a test page. HTTPS comes from the host or a local tunnel | `services/server/src/web` |
-| Rooms | Written and tried locally: create, look up, 8-player cap, empty rooms expire after an hour | `services/server/src/rooms` |
-| Relay | Written: lobby, loadout and input passing, ping and input delay, desync and result checks, malformed-message drops, rate cap, input-ahead room close, winner stays on. Only joining has been tried so far | `services/server/src/relay` |
-| AI gateway | Written: Muse Spark names and tips with versioned prompts, structured output, a 4.5 s budget, per-player daily limits, a cache, and canned answers when no key is set. Canned tips tried locally; live Meta calls need a key | `services/server/src/ai` |
-| Metrics and alert | Written: Prometheus `/metrics`, an `/admin` dashboard, and an alert when AI errors pass 5% (optional Slack or Discord webhook) | `services/server/src/metrics` |
-| Netcode client | Written: relay connection, input-delay lockstep, state-hash checks, fixed-step driver | `packages/netcode` |
-| Client mocks | Written: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
+| Shared types package: move and arena files, room messages, HTTP API, button bits, input-delay rule, fixed-point maths | Tested. Two maths changes for the frontend owner: `fixedSin` gives 0 rather than -0 at a half turn, and its error bound is documented as under 2/65536 (it was stated as 1, measured 1.7) | `packages/shared` |
+| Web hosting | Tested: serves the web app, invite links, a test page and the relay lab. HTTPS comes from the host or a local tunnel | `services/server/src/web` |
+| Rooms | Tested: create, look up, 8-player cap, host hand-over, empty rooms expire after an hour | `services/server/src/rooms` |
+| Relay | Tested over real WebSockets: lobby, loadout and input passing, ping and input delay, desync and result checks, malformed-message drops, rate cap, input-ahead room close, winner stays on. Bots have played full matches and rematches through it | `services/server/src/relay` |
+| AI gateway | Tested against a stand-in for Meta's API: structured output, reply cleanup, the cache, daily limits, one retry, the 4.5 s budget and the fallbacks. Live Meta calls still need a key | `services/server/src/ai` |
+| Metrics and alert | Tested: Prometheus `/metrics`, an `/admin` dashboard, and an alert when AI errors pass 5% (optional Slack or Discord webhook) | `services/server/src/metrics` |
+| Netcode client | Tested, with two fixes: the driver's first update could skip its frame, and the bad-network simulation could reorder messages | `packages/netcode` |
+| Client mocks | Tested: a fake relay with an echo opponent, and canned AI names and tips | `packages/netcode` |
 | Test page for phones | Written: create a room, open the link on a second phone, see each other | `services/server/public` |
-| Relay lab (a toy match between two phones) | Not started | |
-| Automated tests, bot matches, bad-network and load scripts | Not started | |
-| Staging deploy (Docker, Fly.io) and CI | Not started | |
+| Relay lab (a toy match between two phones) | Written and tried in a browser against a bot: create a room, share the link, ready, fight, rematch. Shows ping, input delay, time spent waiting and the state checks | `services/server/lab` |
+| Automated tests, bot matches, bad-network and load scripts | Written: 135 tests (contract, netcode, services, matches through the relay). `npm run bots` plays real-time bot matches with optional added delay and jitter, for the 50-match, bad-network and load checks | `*/test`, `services/server/scripts` |
+| Staging deploy (Docker, Fly.io) and CI | The Docker image is built and tried locally: 50 bot matches in a row, a slow network, 100 rooms, and a clean shutdown that tells phones to reload. Not deployed, and CI hasn't run yet. CI typechecks, tests, plays bot matches and smoke-tests the image; staging deploys by hand. Needs a Fly.io app, a `FLY_API_TOKEN` secret and the Meta test key | `Dockerfile`, `fly.toml`, `.github/workflows` |
 | Launch services | Not started; they wait for playtests | |
 
-**Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. Weeks 2 and 3 need the relay lab or the game client.
+**Bot results so far** (one laptop; the network checks ran inside Docker, on Linux):
+
+- 100 rooms at once (200 bots): all 100 matches finished with no desync or relay error. The relay held inputs under 0.2 ms (p99) and picked 3 frames of input delay for every match.
+- Bad networks, 12 matches at each level with ±20 ms jitter, no desyncs: +50 ms round trip between the phones picked 3 frames and the phones never waited; +100 ms picked 4 to 5 frames and they waited 0.5% of the time; +150 ms picked 6 frames and they never waited.
+- Run these checks in Docker or on Linux. Windows timers tick every 15.6 ms, which stretches the bots' added delays, and Docker Desktop's port forwarding on Windows raised round trips to 40 ms under load. The relay's own hold stayed under 0.2 ms either way.
+
+**Week checks.** Week 1 ("two phones join one room from a link and see each other") is ready to try with the test page. For week 2, the relay half is ready to try on two phones with the lab at `/lab/`; live Meta move names need a key. For week 3, CI runs the 50-match and slow-network bot checks, and staging needs the Fly.io setup in `fly.toml`.
 
 **Contract details settled in code.** The [Integration PRD](04-integration-prd.md) left these open, so the frontend owner should review them:
 
@@ -51,7 +57,7 @@ Updated 2026-11-03. The code is on the `backend-mvp` branch. Nothing has been tr
 - `start` also carries `fighters` (left, then right) and `arenaId`. The relay's `end` adds a `reason`: finished, desync, disconnect or room_closed.
 - The 4 stick bits are up, down, left and right on screen; then L, H, S, D and Block.
 - `stateHash` is an unsigned 32-bit number, sent after frames 0, 60, 120 and so on.
-- The ping in the input-delay rule is the round trip between the two phones through the relay.
+- The ping in the input-delay rule is the round trip between the two phones through the relay. Each phone's part is the median of its last 5 round trips to the relay. Before a phone's first match, the relay pings it a few more times, so a match can take up to 1 s to start after both tap Ready.
 - Move frames are 19 little-endian int16 values each: root x and y in millimetres, then 17 joint angles in 1/65536 of a turn. The move hash covers a fixed JSON array of the hashed fields.
 - `POST /ai/move-name` takes the 3 images as `keyframes` (PNG or WebP data URLs). Phones send a random id in `X-Player-Id` for per-player limits, and both AI calls answer 429 once the daily limit is hit.
 - Room codes are 16 characters, invite links are `/r/{code}`, and the first player to join hosts.

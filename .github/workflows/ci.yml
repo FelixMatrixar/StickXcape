@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, backend-mvp]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, test and bot matches
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Start the built server
+        run: |
+          MAX_CONNECTIONS_PER_IP=1000 ROOMS_PER_IP_PER_10_MIN=1000 node services/server/dist/index.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/healthz
+
+      # Week 3 check: 50 matches in a row with no desync or relay error.
+      - name: 50 bot matches
+        run: npm run bots -- --rooms 10 --matches 5 --max-frames 900 --quiet
+
+      # Bad network: 100 ms more round trip between the phones, with jitter. On Linux the bots
+      # waited 0.5% of the time here, well inside the 5% limit.
+      - name: Bot matches on a slow network
+        run: npm run bots -- --rooms 4 --latency 100 --jitter 20 --max-frames 900 --quiet
+
+      - name: Server log
+        if: always()
+        run: cat server.log || true
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t sticxcape:ci .
+      - name: Smoke test the image
+        run: |
+          docker run -d --name sticxcape -p 8080:8080 sticxcape:ci
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/healthz
+          curl -fsS http://127.0.0.1:8080/lab/ | grep -q 'relay lab'
+          curl -fsS -X POST -H 'content-type: application/json' -d '{"nickname":"CI"}' http://127.0.0.1:8080/rooms
+      - name: Container log
+        if: always()
+        run: docker logs sticxcape || true

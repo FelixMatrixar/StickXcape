@@ -40,6 +40,12 @@ interface Match {
   endTimer: NodeJS.Timeout | null;
 }
 
+/** Two fighters are ready and the relay is measuring their round trips before starting. */
+interface PendingStart {
+  fighters: [number, number];
+  timers: NodeJS.Timeout[];
+}
+
 const MAX_PENDING_HASHES = 32;
 
 /**
@@ -57,6 +63,7 @@ export class Hub {
   private queue: number[] = [];
   /** The next two fighters as last announced; they have each other's loadouts. */
   private pairing: [number, number] | null = null;
+  private pendingStart: PendingStart | null = null;
   private match: Match | null = null;
 
   constructor(room: Room, ctx: HubContext) {
@@ -94,6 +101,7 @@ export class Hub {
     this.conns.delete(player);
     this.loadouts.delete(player);
     this.ready.delete(player);
+    if (this.pendingStart?.fighters.includes(player)) this.cancelPendingStart();
     this.queue = this.queue.filter((p) => p !== player);
     this.room.removeMember(player, this.ctx.now());
     this.ctx.log.info({ room: this.room.code, nickname: conn.nickname, player }, 'player left');
@@ -132,7 +140,7 @@ export class Hub {
     if (!pairing || !pairing.includes(player)) return this.error(player, 'not_fighter', 'Wait for your turn to fight');
     if (!this.loadouts.has(player)) return this.error(player, 'no_loadout', 'Send a loadout before getting ready');
     this.ready.add(player);
-    if (this.ready.has(pairing[0]) && this.ready.has(pairing[1])) this.startMatch(pairing);
+    if (this.ready.has(pairing[0]) && this.ready.has(pairing[1])) this.prepareMatch(pairing);
     else this.broadcastRoom();
   }
 
@@ -210,6 +218,7 @@ export class Hub {
 
   /** Tells every phone why the room is closing, ends any match and disconnects everyone. */
   close(code: ErrorCode, message: string): void {
+    this.cancelPendingStart();
     if (this.match) this.endMatch('room_closed', null);
     for (const conn of this.conns.values()) {
       conn.hub = null;
@@ -236,6 +245,55 @@ export class Hub {
       queue: [...this.queue],
       fighters: this.match ? [this.match.fighters[0], this.match.fighters[1]] : null,
     };
+  }
+
+  /** Called after each round trip the relay measures, so a pending match starts once it has its samples. */
+  rttMeasured(): void {
+    const pending = this.pendingStart;
+    if (pending && pending.fighters.every((p) => this.conns.get(p)?.missingRtts === 0)) this.launchPendingStart();
+  }
+
+  /**
+   * Both fighters are ready. Their input delay is set once, from each one's median round trip, so
+   * a fighter with fewer than 5 samples (a phone that just joined, perhaps busy loading when it
+   * answered) gets a few extra pings first. The match starts once they're answered, or after
+   * startPingWaitMs either way. Rematches have their samples already and start at once.
+   */
+  private prepareMatch(fighters: [number, number]): void {
+    const pending = this.pendingStart;
+    if (pending && pending.fighters[0] === fighters[0] && pending.fighters[1] === fighters[1]) return;
+    this.cancelPendingStart();
+    const conns = fighters.map((p) => this.conns.get(p));
+    if (conns.every((conn) => conn && conn.missingRtts <= 0)) return this.startMatch(fighters);
+
+    const { startPingSpacingMs, startPingWaitMs } = this.ctx.config;
+    const timers: NodeJS.Timeout[] = [];
+    for (const conn of conns) {
+      if (!conn) continue;
+      for (let i = 0; i < conn.missingRtts; i++) {
+        timers.push(setTimeout(() => conn.send({ type: 'ping', time: this.ctx.now() }), i * startPingSpacingMs));
+      }
+    }
+    timers.push(setTimeout(() => this.launchPendingStart(), startPingWaitMs));
+    this.pendingStart = { fighters, timers };
+    this.broadcastRoom();
+  }
+
+  /** Starts the pending match unless something changed while measuring: the same two must still be ready. */
+  private launchPendingStart(): void {
+    const pending = this.pendingStart;
+    if (!pending) return;
+    this.cancelPendingStart();
+    const [a, b] = pending.fighters;
+    const pairing = this.pairing;
+    if (this.match || !pairing || pairing[0] !== a || pairing[1] !== b || !this.ready.has(a) || !this.ready.has(b)) return;
+    this.startMatch(pending.fighters);
+  }
+
+  private cancelPendingStart(): void {
+    if (!this.pendingStart) return;
+    for (const timer of this.pendingStart.timers) clearTimeout(timer);
+    this.pendingStart = null;
   }
 
   private startMatch([a, b]: [number, number]): void {

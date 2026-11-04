@@ -28,6 +28,10 @@ export interface RelayConfig {
   maxConnectionsPerIp: number;
   /** Round trip assumed for a phone with no ping samples yet. */
   defaultRttMs: number;
+  /** Before a match, a fighter short of round-trip samples gets extra pings this far apart. */
+  startPingSpacingMs: number;
+  /** A match waits at most this long for those pings to be answered. */
+  startPingWaitMs: number;
 }
 
 export interface AiConfig {
@@ -129,6 +133,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       aheadToleranceFrames: 120,
       maxConnectionsPerIp: int(env, 'MAX_CONNECTIONS_PER_IP', 32, 1, 10_000),
       defaultRttMs: 50,
+      startPingSpacingMs: 75,
+      startPingWaitMs: 1000,
     },
     ai: {
       apiKey: env.MODEL_API_KEY || null,

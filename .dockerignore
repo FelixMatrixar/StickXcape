@@ -1,0 +1,16 @@
+# Built in the image, never copied in: a stale tsbuildinfo would make tsc -b skip the build.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+coverage
+
+# Secrets and local files
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.claude
+plan
+*.md
+*.log
